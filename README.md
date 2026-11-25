@@ -66,7 +66,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
 | `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
 | `.dev/` | Scratch space for temporary files and the pytest cache (git-ignored). |
-| `CHANGELOG.md` | Release notes (current: 0.2.0). |
+| `CHANGELOG.md` | Release notes (current: 0.2.1). |
 
 ## Requirements
 
@@ -143,8 +143,9 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | Answer the side question, push the cursor past that edge of the server | Cursor appears on the client's opposite edge at the same relative height; server logs `-> REMOTE (<side> edge)` |
 | Push past the client's opposite edge | Cursor comes back to the server at the matching height; server logs `<- LOCAL (edge)` |
 | Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
-| Untested: switch back and forth over the edge as fast as you can, 20+ times | The cursor never gets stuck on the client; if the server logs `server cursor slipped …`, the fix caught it |
-| Untested: control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
+| Switch back and forth over the edge as fast as you can, 20+ times | The cursor never gets stuck on the client; if the server logs `server cursor slipped …`, the fix caught it |
+| Control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
+| Focus an admin window on the server (for example the HoYoPlay launcher, with kmshare not run as administrator), then push past the edge | No switch; the server logs `focused window "…" runs as administrator: …`. Click another window: `admin window lost focus: …`, and switching works again |
 
 ## Commands
 
