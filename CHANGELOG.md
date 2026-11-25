@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed:** switching back and forth quickly could trap the cursor on the client: it was pushed to the client's left edge and only moved vertically. If the server's frozen cursor moved even once while the client was in control, every later move carried that offset. Moves are now measured from the server cursor's real position, and the server logs `server cursor slipped <n> px …` when it happens.
+- **Admin-window warning:** when kmshare isn't running as administrator and an admin window (for example the HoYoPlay launcher) gets focus, kmshare logs why input stops working there: on the server the cursor stays trapped and the hotkey and edge switching don't respond; on the client clicks and keys don't reach that window. It logs again when focus moves back. The README and BEHAVIOR.md explain how to run kmshare as administrator.
 - **Fixed:** the client PC went idle (Teams showed Away, the screen saver or lock could start) while you only moved the mouse on it. kmshare places the cursor with `SetCursorPos`, which Windows doesn't count as user input. Cursor moves now also send a zero-distance input event, at most once a second, which resets the idle timer without moving the cursor.
 
 ## 0.2.0 (2026-11-25)

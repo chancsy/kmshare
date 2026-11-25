@@ -88,6 +88,7 @@ class Server:
         self.remote = False
         self._anchor = (0, 0)
         self._saved_pos: tuple[int, int] | None = None
+        self._slip_warned = False  # one warning per REMOTE session
         self._pressed: set[int] = set()     # physically held keys (for hotkey detection)
         self._local_down: set[int] = set()  # pressed while LOCAL: their key-ups stay local
         self._swallow_up: set[int] = set()  # hotkey trigger: eat its key-up too
@@ -273,6 +274,7 @@ class Server:
         # relative to this spot give the motion to send.
         self._saved_pos = self._anchor = winput.cursor_pos()
         self._stale_anchor = None
+        self._slip_warned = False
         self.remote = True
         if edge_fraction is not None and self.side is not None:
             self._send({"t": "enter", "edge": OPPOSITE[self.side], "f": round(edge_fraction, 4)})
@@ -355,7 +357,13 @@ class Server:
                         return True
                 return False
             if msg == WM_MOUSEMOVE:
-                dx, dy = x - self._anchor[0], y - self._anchor[1]
+                # Measure from where the cursor really is, not only from the frozen spot: if an
+                # event ever got past the hook and moved it, a fixed anchor would add that
+                # offset to every later move (client cursor pinned to one edge).
+                real = winput.cursor_pos()
+                if real != self._anchor:
+                    self._on_slip(real)
+                dx, dy = x - real[0], y - real[1]
                 if dx or dy:
                     self._send({"t": "m", "x": dx, "y": dy})
             elif msg in CLICKS:
@@ -368,6 +376,22 @@ class Server:
                 delta = ctypes.c_short((mouse_data >> 16) & 0xFFFF).value
                 self._send({"t": "w", "d": delta, "h": msg == WM_MOUSEHWHEEL})
             return True
+
+    def _on_slip(self, real: tuple[int, int]) -> None:
+        """The frozen cursor moved while REMOTE: re-anchor there (no jump on the client).
+
+        Moving it back would turn moves Windows already computed from the slipped spot into
+        one big jump. ``_saved_pos`` still holds where to return to on a hotkey switch.
+        """
+        ax, ay = self._anchor
+        dist = round(((real[0] - ax) ** 2 + (real[1] - ay) ** 2) ** 0.5)
+        if not self._slip_warned:
+            log.warning("server cursor slipped %d px while controlling the client (an input event got "
+                        "past the hook, or another program moved it); corrected", dist)
+            self._slip_warned = True
+        else:
+            log.debug("server cursor slipped again: %d px", dist)
+        self._anchor = real
 
     def _is_stale_move(self, x: int, y: int) -> bool:
         """Right after returning to LOCAL: is this move's target computed from the frozen spot?

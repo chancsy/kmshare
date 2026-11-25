@@ -189,3 +189,20 @@ def test_hotkey_return_without_moving_needs_no_guard(srv, no_cursor):
 def test_stale_leave_ignored(edge_srv):
     edge_srv._on_client_leave(edge_srv._gen, {"t": "leave", "f": 0.5})  # not REMOTE
     assert not edge_srv.remote and sent(edge_srv) == []
+
+
+def test_slipped_cursor_does_not_offset_every_move(srv, no_cursor, caplog):
+    """Rapid-switch bug: the frozen cursor moved, so x - anchor carried a fixed offset forever."""
+    import logging
+
+    caplog.set_level(logging.WARNING, "kmshare.server")
+    press_hotkey(srv), release_hotkey(srv), sent(srv)              # REMOTE, frozen at (100, 100)
+    no_cursor["pos"] = (-200, 100)                                  # an event slipped past: cursor moved 300 px left
+    assert srv.on_mouse(WM_MOUSEMOVE, -195, 98, 0) is True          # user moves +5, -2
+    assert srv.on_mouse(WM_MOUSEMOVE, -190, 100, 0) is True         # and +10, 0 from there
+    assert sent(srv) == [{"t": "m", "x": 5, "y": -2}, {"t": "m", "x": 10, "y": 0}]  # not -295 / -290
+    assert srv._anchor == (-200, 100)
+    warnings = [r.getMessage() for r in caplog.records]
+    assert len(warnings) == 1 and warnings[0].startswith("server cursor slipped 300 px")
+    press_hotkey(srv)                                               # hotkey return: back to the original spot
+    assert not srv.remote and no_cursor["sets"][-1] == (100, 100)

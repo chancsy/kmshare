@@ -163,6 +163,7 @@ The hotkey works at any time. An edge push only switches when a client is connec
 **Mouse:**
 - All physical mouse events are **blocked on the server**, including types kmshare doesn't forward. The server's cursor stays frozen.
 - **Movement** is sent as relative motion: how far the cursor *would* have moved from the frozen spot. Windows reports this even when the spot is at a screen edge, so movement towards the edge is measured too. Windows pointer speed and acceleration are applied **once**, on the server, so the feel matches the server's mouse settings.
+- **Measured from the real cursor:** each move is measured from where the server's cursor actually is, which is normally the frozen spot. If the cursor ever moved anyway (an event got past the hook, or another program moved it), kmshare logs `server cursor slipped <n> px while controlling the client …; corrected` once per session and freezes it at the new spot. Without this, every later move would carry the same offset, pinning the client's cursor to one edge with only the other direction still working. A hotkey return still puts the cursor back where it was frozen.
 - Moves that queue up between sends are added together into one message. No motion is lost; there are just fewer packets.
 - **Buttons:** left, right, middle, X1 (back), X2 (forward). Presses and releases are sent separately, so dragging works.
 - **Wheel:** vertical and horizontal, with the raw amount, so high-resolution and smooth-scrolling devices keep their precision.
@@ -289,6 +290,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 | Server app closed with Ctrl+C | Already LOCAL (Ctrl+C only reaches the server while LOCAL) | Connection closes → releases everything, reconnects |
 | Server window closed with **X** or the process is killed while REMOTE | Hooks disappear with the process → **local input returns immediately**. The cursor is where it was frozen. | Connection closes, or goes silent until `peer_timeout` → releases everything, reconnects |
 | Server PC sleeps, locks or freezes | Hooks don't see secure-desktop input. Mode is kept. | Silence → releases everything after `peer_timeout` |
+| An **admin window** (for example the HoYoPlay launcher) has focus and kmshare isn't running as administrator | Windows hides its input from the hooks: **edge switching and the hotkey don't work and the cursor stays on the server**. If it happens while REMOTE, input can go to that window. Logs `focused window … runs as administrator: …`; clicking a normal window restores input and logs `admin window lost focus: …`. Fix: run kmshare as administrator (steps in README, *Security notes & limitations*). | The cursor still moves over it, but clicks and keys don't reach it. Logs the same warning with the client wording. Fix: run the client as administrator. |
 | A message fails its check (tampering, replay, reordering, wrong key mid-session, frame > 64 KB) | Drops the client → LOCAL | Disconnects → releases everything, reconnects |
 | A hook throws an error | Logs `keyboard hook error` / `mouse hook error`. **That event goes to the server.** The hooks keep running. | – |
 | A new client with the correct key connects | Old client replaced; → LOCAL first if REMOTE | Old client: disconnected → releases everything, reconnects (and becomes the current client again, replacing the newer one) |
@@ -374,6 +376,11 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 | S | `no client connected, staying LOCAL` | Hotkey pressed with no client |
 | S | `client <ip:port> disconnected (<reason>)` | Client gone |
 | S | `keyboard hook error` / `mouse hook error` + traceback | Bug in a hook; that event went to the server |
+| S | `server cursor slipped <n> px while controlling the client (…); corrected` | The frozen cursor moved while REMOTE; moves are measured from the new spot (see [Server modes](#5-server-local-and-remote-modes)). Once per session. |
+| S, C | `focused window "<title>" (<exe>) runs as administrator: …` | An admin window got focus and kmshare isn't admin (see the failure table). Logged once per window. |
+| S, C | `focused window "<title>" may run as administrator (Windows won't say): …` | Windows refused to say whether the focused window is elevated (protected or anti-cheat processes); treated the same way |
+| S, C | `admin window lost focus: …` | Focus moved back to a normal window; input works again |
+| S, C | `running as administrator: admin windows can be controlled too` | kmshare is elevated, so there's no admin-window check |
 | C | `client: connecting to <host>:<port> ...` | Started |
 | C | `cannot reach server <host>:<port> (<error>), retrying ...` | Network or firewall problem |
 | C | `handshake failed: server rejected the key` | Keys differ |
@@ -392,8 +399,9 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 - **Secure desktop:** lock screen, UAC prompts and Ctrl+Alt+Del can't be controlled on the client, and the server's hooks can't see them.
 - **Shortcuts Windows reserves on the server:** Ctrl+Alt+Del always acts on the server. Win+L locks the server; the hook can't stop it (untested).
 - **Elevated windows:** if kmshare isn't running as administrator:
-  - On the server, input to a focused admin window bypasses the hooks, so it isn't sent to the client.
+  - On the server, input to a focused admin window bypasses the hooks, so it isn't sent to the client and edge switching can't see the cursor (it stays trapped until you click a normal window).
   - On the client, kmshare can't send input into admin windows.
+  - kmshare checks the focused window twice a second and logs a warning when this applies; it can't work around it without running as administrator.
 - **Keyboard layout:** keys are sent as virtual-key codes, so both PCs should use the same layout.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
 - **Not implemented yet:** clipboard sync, dragging things across PCs, more than one client at a time, operating systems other than Windows.

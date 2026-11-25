@@ -62,6 +62,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `kmshare/edge.py` | Edge detection, safeguards, monitor layouts, where the cursor appears after a crossing. |
 | `kmshare/channel.py` | Key derivation, handshake, encrypted message framing. |
 | `kmshare/winput.py` | Win32 cursor and `SendInput` wrappers. |
+| `kmshare/adminwatch.py` | Warns when the focused window runs as administrator and kmshare doesn't. |
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
 | `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
 | `.dev/` | Scratch space for temporary files and the pytest cache (git-ignored). |
@@ -132,7 +133,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `73 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `79 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -142,6 +143,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | Answer the side question, push the cursor past that edge of the server | Cursor appears on the client's opposite edge at the same relative height; server logs `-> REMOTE (<side> edge)` |
 | Push past the client's opposite edge | Cursor comes back to the server at the matching height; server logs `<- LOCAL (edge)` |
 | Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
+| Untested: switch back and forth over the edge as fast as you can, 20+ times | The cursor never gets stuck on the client; if the server logs `server cursor slipped …`, the fix caught it |
 | Untested: control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
 
 ## Commands
@@ -193,7 +195,20 @@ All steps below have been tested on two PCs (server with two monitors of differe
 - **What's exposed:** the server listens on TCP `port` on all adapters (`bind = 0.0.0.0`). Anyone who can connect still has to pass the key check, and the server handles one handshake at a time with a 1 s pause after each failure, which slows down guessing. Set `bind` to the server's LAN IP to listen on one adapter only.
 - **The key** is never written to disk. It's turned into an encryption key with scrypt, a deliberately slow function. A weak key could still be guessed offline by someone who records a handshake *by posing as your server*, so use a passphrase rather than a short password.
 - **Git ignores** `.dev/` (temporary files, pytest cache) and `__pycache__/`. `kmshare.ini` contains no secrets and is tracked.
-- **Elevated windows:** Windows stops a normal program from injecting input into admin windows, and stops its hooks from seeing input while an admin window is focused. On the client, run kmshare as administrator if you need to control admin apps. On the server, if an admin window is focused while you're controlling the client, input leaks to that window. Run kmshare as administrator there too, or avoid that situation.
+- **Admin windows (for example the HoYoPlay launcher, Task Manager, installers):** Windows hides input aimed at an admin window from a program that isn't running as administrator.
+  - **Server:** while an admin window has focus, kmshare doesn't see the mouse or keyboard. Edge switching and Ctrl+Shift+F12 don't work, and the cursor stays **trapped** on the server. Click any normal window (or the desktop or taskbar) and it works again. If an admin window is focused while you're controlling the client, your input can go to that window instead.
+  - **Client:** the cursor still moves over admin windows, but clicks and keys don't reach them.
+  - kmshare logs `focused window "HoYoPlay" (HYP.exe) runs as administrator: …` when this happens, and `admin window lost focus: …` when it's over. Windows that won't even say whether they're elevated (some game launchers and anti-cheat) are logged as `may run as administrator`.
+  - **Fix: run kmshare as administrator** on the PC with the admin app (only that PC needs it):
+    1. Start menu → type `Terminal` (or `PowerShell`) → right-click it → **Run as administrator** → **Yes** at the UAC prompt.
+    2. An admin terminal starts in `C:\Windows\System32`, so go to the repo and activate the venv again:
+       ```powershell
+       cd <repo>
+       .\.venv\Scripts\Activate.ps1
+       python -m kmshare
+       ```
+       Use your own venv's `Activate.ps1` if it lives elsewhere.
+    3. kmshare logs `running as administrator: admin windows can be controlled too` and no longer warns.
 - **Not supported:** lock screen, UAC prompts and Ctrl+Alt+Del on either PC. Windows' secure desktop blocks hooks and injected input.
 - **Keyboard layout:** keys are sent as virtual-key codes, so both PCs should use the same keyboard layout.
 - **Laptop touchpads:** cursor movement and clicks are forwarded. Untested: precision-touchpad gestures (two-finger scroll, three-finger swipes) may still act on the server.

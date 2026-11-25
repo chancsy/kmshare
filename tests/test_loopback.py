@@ -35,8 +35,19 @@ def start_client(cfg, key, port, injector, with_client=False):
     return (stop, t, c) if with_client else (stop, t)
 
 
-def test_edge_crossing_round_trip(running_server, master, fake_injector, no_cursor):
+def test_edge_crossing_round_trip(running_server, master, fake_injector, no_cursor, monkeypatch):
     """Server edge push -> client cursor placed on its left edge -> client edge push -> back."""
+    import types
+
+    import kmshare.server
+    from kmshare import winput
+
+    # Both ends run in this process: give the server its own (frozen) cursor, so the
+    # positions set below for the client don't look like the server's cursor moving.
+    server_cursor = {"pos": (1919, 540)}
+    proxy = types.SimpleNamespace(**{n: getattr(winput, n) for n in dir(winput) if not n.startswith("__")})
+    proxy.cursor_pos = lambda: server_cursor["pos"]
+    monkeypatch.setattr(kmshare.server, "winput", proxy)
     srv, cfg = running_server
     stop, t, client = start_client(cfg, master, srv.port, fake_injector, with_client=True)
     try:
