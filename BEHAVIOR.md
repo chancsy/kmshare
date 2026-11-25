@@ -1,6 +1,6 @@
 # kmshare behaviour reference
 
-This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.2.1** (see [CHANGELOG.md](CHANGELOG.md)). For setup, see [README.md](README.md).
+This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.3.0** (see [CHANGELOG.md](CHANGELOG.md)). For setup, see [README.md](README.md).
 
 Terms used below:
 
@@ -43,7 +43,7 @@ kmshare is built so that **any failure gives control back to the server's own ke
 | No accidental switching | Holding the hotkey doesn't keep flipping modes: auto-repeat and the key-up of the trigger key are swallowed. Edge switching needs a real push past an outer edge, ignores corners, never fires mid-drag, and can't bounce straight back ([Edge switching](#6-edge-switching)). |
 | No cursor yank on return | When control comes back and kmshare places the cursor, mouse movements Windows had already computed from the frozen spot are dropped, so they can't pull the cursor back there ([Switching REMOTE → LOCAL](#switching-remote--local)). |
 | Edge switching can't strand you | The hotkey works whatever the edge state. A `leave` from the client is only acted on while the server is REMOTE for that same connection. |
-| The clipboard can't stall input | Clipboard work runs on its own thread with short retries, never inside the hooks. Text copied before launch, or marked private by a password manager, is never sent. |
+| The clipboard can't stall input | Clipboard work runs on its own thread with short retries, never inside the hooks. Text copied before launch, or marked private by the copying app (e.g. KeePass), is never sent. |
 | Nothing works without the key | No input is sent or replayed until both sides have proven they hold the same key. |
 
 ---
@@ -55,7 +55,7 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 1. **Arguments** are read: `--role`, `--config`, `--host`, `-v` (debug logging).
 2. **DPI awareness** is switched on (per-monitor v2, with older fallbacks), so every coordinate is in physical pixels and works with Windows display scaling.
 3. **The config** is loaded. If it's missing or invalid, kmshare prints `Config error: …` and exits with code **2**.
-4. A banner shows the version and config path: `kmshare 0.2.1: keyboard/mouse sharing  (config: …)`.
+4. A banner shows the version and config path: `kmshare 0.3.0: keyboard/mouse sharing  (config: …)`.
 5. **Role:** taken from `--role`, otherwise you're asked `Role [s/c]:` (`s`, `server`, `c` or `client`, any case). The question repeats until the answer is valid.
 6. **Settings.** What happens depends on whether any argument was given.
 
@@ -257,7 +257,8 @@ Text you copy on one PC is there to paste on the other after control switches. I
 | Text over `max_kb` (measured as UTF-8) | Not sent | `clipboard: <size> of text is over the <limit> limit, not sent` |
 | Received text over **this** PC's `max_kb` | Not applied | `clipboard: received <size>, over this PC's <limit> limit, not applied` (on the receiving PC) |
 | An image, files, or anything without a plain-text form | Not sent; the other PC's clipboard is left as it was | `clipboard: not text, not sent` |
-| Content marked private by the app that copied it (`ExcludeClipboardContentFromMonitorProcessing` or `Clipboard Viewer Ignore`, set by password managers such as KeePass and Bitwarden) | Not sent | `clipboard: marked private by the app that copied it (e.g. a password manager), not sent` |
+| Content marked private by the app that copied it (`ExcludeClipboardContentFromMonitorProcessing` or `Clipboard Viewer Ignore`, set by some desktop password managers, such as KeePass) | Not sent | `clipboard: marked private by the app that copied it (e.g. a password manager), not sent` |
+| Text copied from a browser extension, including password managers such as Bitwarden's | **Sent** like any other text: the browser writes plain text with no private marker (Chrome only records the source, `chrome-extension://<id>/…`, which kmshare doesn't check) | `clipboard: sent <size> of text to …` |
 | Empty | Nothing | – |
 
 Rich text and HTML copies usually also carry plain text: that plain text is what's sent, without formatting. Text is cut at the first NUL character, as Windows' plain-text format does.
@@ -463,7 +464,7 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
   - kmshare checks the focused window twice a second and logs a warning when this applies; it can't work around it without running as administrator.
 - **Keyboard layout:** keys are sent as virtual-key codes, so both PCs should use the same layout.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
-- **Clipboard:** plain text only (no images, files or formatting), and only when control switches, not on every copy.
+- **Clipboard:** plain text only (no images, files or formatting), and only when control switches, not on every copy. Passwords copied from browser-extension password managers (Bitwarden's, for example) aren't marked private, so they are sent.
 - **Not implemented yet:** dragging things across PCs, more than one client at a time, operating systems other than Windows.
 - **The side answer can't be changed while the server runs.** Restart the server to answer again.
 - **The server may go idle while REMOTE** (untested): its own input is blocked before Windows handles it, so Teams presence, the screen saver or the lock may start on the server during long sessions on the client.

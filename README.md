@@ -11,7 +11,7 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
   - **client**: the PC that gets controlled.
 - **Push the cursor past the screen edge** to move it onto the other PC, and push it back past the opposite edge on the other PC to return. When a client connects, the server asks where it sits (left, right, top or bottom). Safeguards stop accidental switching; see [Edge switching](#edge-switching). It can be turned off.
 - **Ctrl+Shift+F12** on the server always works too: it hands control to the client, and pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor stays frozen where it was and ignores input.
-- **Copy on one PC, paste on the other.** Text you copy is there on the other PC after control switches (hotkey or edge), in both directions. Plain text only, up to 1 MB. Text copied before kmshare started, and anything a password manager marks private, is never sent. Both PCs must have it on; see [Clipboard](#clipboard).
+- **Copy on one PC, paste on the other.** Text you copy is there on the other PC after control switches (hotkey or edge), in both directions. Plain text only, up to 1 MB. Text copied before kmshare started, and anything the copying app marks private (KeePass does), is never sent. Passwords copied from a browser extension such as Bitwarden's *are* sent; see [Clipboard](#clipboard). Both PCs must have it on; see [Clipboard](#clipboard).
 - **Protected by a shared key** that you type at every launch and that is never saved. A PC with the wrong key is rejected, and everything on the network is encrypted.
 - **Failsafes:** if the wifi drops or either side quits, the server goes back to local control within a few seconds, and the client releases any keys or buttons that were held down. Nothing stays stuck.
 - Every behaviour, including each failure case, is described in [BEHAVIOR.md](BEHAVIOR.md).
@@ -70,7 +70,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
 | `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
 | `.dev/` | Scratch space for temporary files and the pytest cache (git-ignored). |
-| `CHANGELOG.md` | Release notes (current: 0.2.1). |
+| `CHANGELOG.md` | Release notes (current: 0.3.0). |
 
 ## Requirements
 
@@ -150,10 +150,12 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
 | Switch back and forth over the edge as fast as you can, 20+ times | The cursor never gets stuck on the client; if the server logs `server cursor slipped …`, the fix caught it |
 | Control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
-| Untested: copy text on the server, switch to the client, paste | The text pastes on the client; server logs `clipboard: sent … of text to the client` |
-| Untested: copy text on the client, switch back, paste on the server | The text pastes on the server; client logs `clipboard: sent … of text to the server` |
-| Untested: copy an image (or a password from a password manager), switch | Not sent; the log says `not text, not sent` (or `marked private …`); the other PC's clipboard is unchanged |
-| Untested: set `clipboard = false` on the client only, reconnect, copy and switch | Both consoles log `clipboard sharing off (…)`; nothing is shared either way |
+| Copy text on the server, switch to the client, paste | The text pastes on the client; server logs `clipboard: sent … of text to the client` |
+| Copy text on the client, switch back, paste on the server | The text pastes on the server; client logs `clipboard: sent … of text to the server` |
+| Copy an image, switch | Not sent; the log says `not text, not sent`; the other PC's clipboard is unchanged |
+| Copy text an app marks private (e.g. a KeePass password), switch | Not sent; the log says `marked private by the app that copied it …` |
+| Copy a password from the Bitwarden browser extension, switch | **Sent** (`clipboard: sent …`): the extension doesn't mark it private |
+| Set `clipboard = false` on the client only, reconnect, copy and switch | Both consoles log `clipboard sharing off (…)`; nothing is shared either way |
 | Focus an admin window on the server (for example the HoYoPlay launcher, with kmshare not run as administrator), then push past the edge | No switch; the server logs `focused window "…" runs as administrator: …`. Click another window: `admin window lost focus: …`, and switching works again |
 
 ## Commands
@@ -206,14 +208,15 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 - **When:** the PC giving up control sends its clipboard to the other one. Switching to the client sends the server's clipboard; coming back sends the client's. Copying while you stay on one PC sends nothing.
 - **Only new copies:** a clipboard is sent once, and only if it changed since the last switch. Text that just arrived from the other PC isn't sent back. What's on the clipboard when kmshare starts is never sent.
-- **Not sent** (and logged): images and files (`clipboard: not text, not sent`), text over `max_kb`, and anything the copying app marks private, which password managers such as KeePass and Bitwarden do (`… marked private by the app that copied it …`).
+- **Not sent** (and logged): images and files (`clipboard: not text, not sent`), text over `max_kb`, and anything the copying app marks private, which desktop password managers such as KeePass do (`… marked private by the app that copied it …`).
+- **Password-manager browser extensions don't mark their copies private**, so a password copied from one (the Bitwarden/Vaultwarden extension, for example) **is sent** at the next switch. The browser copies it as plain text, just like any other text. To keep a password on one PC, copy it while you're on the PC where you'll paste it, or turn `[features] clipboard` off.
 - **On or off:** `[features] clipboard` on each PC, or the launch question. If either PC has it off, nothing is shared either way. Both consoles say which after connecting: `clipboard sharing on: …` or `clipboard sharing off (turned off on …)`.
 - Full rules, including what happens when another app has the clipboard open, are in [BEHAVIOR.md](BEHAVIOR.md), *Clipboard sharing*.
 
 ## Security notes & limitations
 
 - **What's exposed:** the server listens on TCP `port` on all adapters (`bind = 0.0.0.0`). Anyone who can connect still has to pass the key check, and the server handles one handshake at a time with a 1 s pause after each failure, which slows down guessing. Set `bind` to the server's LAN IP to listen on one adapter only.
-- **Clipboard text** goes over the same encrypted link as your typing, and only its size is logged. Turn `[features] clipboard` off on either PC if you don't want it shared at all.
+- **Clipboard text** goes over the same encrypted link as your typing, and only its size is logged. That includes passwords copied from browser-extension password managers (see [Clipboard](#clipboard)). Turn `[features] clipboard` off on either PC if you don't want it shared at all.
 - **The key** is never written to disk. It's turned into an encryption key with scrypt, a deliberately slow function. A weak key could still be guessed offline by someone who records a handshake *by posing as your server*, so use a passphrase rather than a short password.
 - **Git ignores** `.dev/` (temporary files, pytest cache) and `__pycache__/`. `kmshare.ini` contains no secrets and is tracked.
 - **Admin windows (for example the HoYoPlay launcher, Task Manager, installers):** Windows hides input aimed at an admin window from a program that isn't running as administrator.

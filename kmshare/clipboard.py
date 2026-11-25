@@ -29,7 +29,8 @@ OPEN_TRIES, OPEN_WAIT_S = 5, 0.02  # another app may hold the clipboard open for
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 HWND_MESSAGE = wintypes.HWND(-3)
-# Set by password managers and similar apps: "don't sync or record this".
+# Set by some desktop password managers (e.g. KeePass): "don't sync or record this".
+# Browser extensions (e.g. Bitwarden's) can't set these, so their copies look like any other text.
 PRIVATE_FORMATS = ("ExcludeClipboardContentFromMonitorProcessing", "Clipboard Viewer Ignore")
 
 
