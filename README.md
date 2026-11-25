@@ -65,7 +65,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
 | `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
 | `.dev/` | Scratch space for temporary files and the pytest cache (git-ignored). |
-| `CHANGELOG.md` | Release notes (current: 0.1.0). |
+| `CHANGELOG.md` | Release notes (current: 0.2.0). |
 
 ## Requirements
 

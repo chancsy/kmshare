@@ -1,6 +1,6 @@
 # kmshare behaviour reference
 
-This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.1.0** plus the *Unreleased* changes in [CHANGELOG.md](CHANGELOG.md). For setup, see [README.md](README.md).
+This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.2.0** (see [CHANGELOG.md](CHANGELOG.md)). For setup, see [README.md](README.md).
 
 Terms used below:
 
@@ -53,7 +53,7 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 1. **Arguments** are read: `--role`, `--config`, `--host`, `-v` (debug logging).
 2. **DPI awareness** is switched on (per-monitor v2, with older fallbacks), so every coordinate is in physical pixels and works with Windows display scaling.
 3. **The config** is loaded. If it's missing or invalid, kmshare prints `Config error: …` and exits with code **2**.
-4. A banner shows the version and config path: `kmshare 0.1.0: keyboard/mouse sharing  (config: …)`.
+4. A banner shows the version and config path: `kmshare 0.2.0: keyboard/mouse sharing  (config: …)`.
 5. **Role:** taken from `--role`, otherwise you're asked `Role [s/c]:` (`s`, `server`, `c` or `client`, any case). The question repeats until the answer is valid.
 6. **Settings.** What happens depends on whether any argument was given.
 
