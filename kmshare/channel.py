@@ -21,6 +21,7 @@ import json
 import os
 import socket
 import struct
+import threading
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -83,6 +84,7 @@ class Channel:
         self._aead = AESGCM(session_key)
         self._send_dir, self._recv_dir = send_dir, recv_dir
         self._send_ctr = self._recv_ctr = 0
+        self._send_lock = threading.Lock()
 
     @staticmethod
     def _nonce(direction: int, counter: int) -> bytes:
@@ -90,9 +92,10 @@ class Channel:
 
     def send(self, msg: dict) -> None:
         data = json.dumps(msg, separators=(",", ":")).encode()
-        ct = self._aead.encrypt(self._nonce(self._send_dir, self._send_ctr), data, None)
-        self._send_ctr += 1
-        self.sock.sendall(struct.pack(">I", len(ct)) + ct)
+        with self._send_lock:  # nonce counter + frame order must match across threads
+            ct = self._aead.encrypt(self._nonce(self._send_dir, self._send_ctr), data, None)
+            self._send_ctr += 1
+            self.sock.sendall(struct.pack(">I", len(ct)) + ct)
 
     def recv(self) -> dict:
         """Next message. Raises ``TimeoutError`` only if no frame has started yet."""

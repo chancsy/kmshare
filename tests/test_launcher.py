@@ -49,18 +49,19 @@ def run(monkeypatch, tmp_path):
 
 
 def test_no_args_server_all_defaults(run):
-    code, cap, prompts = run(["s", "", "", "", "", "", "", "", ""], [])
+    code, cap, prompts = run(["s", "", "", "", "", "", "", "", "", ""], [])
     assert code == 0 and cap["role"] == "server"
     cfg = cap["cfg"]
     assert (cfg.port, cfg.bind, cfg.hotkey.text, cfg.beep, cfg.ping_interval, cfg.peer_timeout) == (
         24800, "0.0.0.0", "Ctrl+Shift+F12", True, 2.0, 6.0)
-    assert cfg.edge_switch and cfg.edge.push_px == 8
+    assert cfg.edge_switch and cfg.edge.push_px == 8 and cfg.clipboard
+    assert "  Share copied text with the other PC when control switches (y/n) [y]: " in prompts
     assert "  Port [24800]: " in prompts and "  Switch hotkey [Ctrl+Shift+F12]: " in prompts
 
 
 def test_no_args_server_custom_values_and_reprompt(run):
     answers = ["s", "99999", "5000", "", "nope+x", "ctrl+alt+k", "n", "1", "0.5", "3",
-               "y", "y", "0", "5", "150", "10", "15"]
+               "y", "y", "0", "5", "150", "10", "15", "n"]
     code, cap, prompts = run(answers, [])
     cfg = cap["cfg"]
     assert (cfg.port, cfg.hotkey.text, cfg.beep, cfg.ping_interval, cfg.peer_timeout) == (
@@ -69,16 +70,17 @@ def test_no_args_server_custom_values_and_reprompt(run):
     e = cfg.edge
     assert cfg.edge_switch and (e.push_px, e.delay_ms, e.corner_px, e.rearm_px) == (5, 150, 10, 15)
     assert prompts.count("    Push past the edge before switching, pixels [8]: ") == 2  # 0 rejected
+    assert not cfg.clipboard
 
 
 def test_no_args_server_edge_off(run):
-    code, cap, prompts = run(["s", "", "", "", "", "", "", "n"], [])
+    code, cap, prompts = run(["s", "", "", "", "", "", "", "n", ""], [])
     assert not cap["cfg"].edge_switch
     assert not any("safeguards" in p for p in prompts)
 
 
 def test_no_args_client(run):
-    code, cap, prompts = run(["c", "", "24801", ""], [])
+    code, cap, prompts = run(["c", "", "24801", "", ""], [])
     assert cap["role"] == "client" and cap["host"] == "10.0.0.5"
     assert cap["cfg"].port == 24801
     assert "  Server address (IP or host name) [10.0.0.5]: " in prompts

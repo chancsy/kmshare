@@ -23,6 +23,8 @@ class Config:
     peer_timeout: float = 6.0
     # features
     edge_switch: bool = True
+    clipboard: bool = True
+    clipboard_max_kb: int = 1024
     # layout / edge switching (server side; the client uses the server's values)
     client_side: str = "right"
     edge: EdgeSettings = field(default_factory=EdgeSettings)
@@ -64,6 +66,8 @@ def load_config(path: Path = DEFAULT_INI) -> Config:
         ping_interval=ping,
         peer_timeout=timeout,
         edge_switch=cp.getboolean("features", "edge_switch", fallback=d.edge_switch),
+        clipboard=cp.getboolean("features", "clipboard", fallback=d.clipboard),
+        clipboard_max_kb=_nonneg_int(cp, "clipboard", "max_kb", d.clipboard_max_kb, minimum=1),
         client_side=side,
         edge=EdgeSettings(
             push_px=_nonneg_int(cp, "layout", "edge_push", de.push_px, minimum=1),

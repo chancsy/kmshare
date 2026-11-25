@@ -159,3 +159,47 @@ def test_wrong_key_client_never_connects(running_server, other_master, fake_inje
     finally:
         stop.set()
         t.join(10)
+
+
+def _hotkey(srv):
+    for vk in (LCTRL, LSHIFT, F12):
+        srv.on_key(vk, 0, False, True)
+    for vk in (F12, LSHIFT, LCTRL):
+        srv.on_key(vk, 0, False, False)
+
+
+def test_clipboard_follows_control_both_ways(running_server, master, fake_injector):
+    srv, cfg = running_server
+    stop, t, client = start_client(cfg, master, srv.port, fake_injector, with_client=True)
+    try:
+        assert wait_for(lambda: srv._clip.active and client._clip.active)
+        srv._clip._io.copy("copied on the server ✓")
+        _hotkey(srv)                                                     # -> REMOTE
+        assert wait_for(lambda: client._clip._io.writes == ["copied on the server ✓"])
+        client._clip._io.copy("x" * 20000)                               # 3 chunks
+        _hotkey(srv)                                                     # -> LOCAL: client offers
+        assert wait_for(lambda: srv._clip._io.writes == ["x" * 20000])
+        _hotkey(srv), _hotkey(srv)                                       # nothing new copied: no echo
+        assert srv._clip.drain() and client._clip.drain()
+        assert client._clip._io.writes == ["copied on the server ✓"] and srv._clip._io.writes == ["x" * 20000]
+    finally:
+        stop.set()
+        t.join(5)
+
+
+def test_clipboard_off_on_client_means_off_both_ways(running_server, master, fake_injector):
+    import dataclasses
+
+    srv, cfg = running_server
+    stop, t, client = start_client(dataclasses.replace(cfg, clipboard=False), master, srv.port,
+                                   fake_injector, with_client=True)
+    try:
+        assert wait_for(lambda: srv._chan is not None and not srv._clip.peer_enabled and srv._clip.send)
+        assert not wait_for(lambda: srv._clip.active, timeout=0.5)
+        srv._clip._io.copy("stays here")
+        _hotkey(srv)
+        assert srv._clip.drain() and client._clip.drain()
+        assert client._clip._io.writes == []
+    finally:
+        stop.set()
+        t.join(5)

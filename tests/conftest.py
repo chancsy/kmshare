@@ -10,6 +10,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from kmshare.channel import derive_master_key  # noqa: E402
 
 
+class FakeClipboard:
+    """Stands in for the Windows clipboard (one per ClipboardSync), so tests never touch the real one."""
+
+    def __init__(self):
+        self.seq, self.text, self.kind, self.busy = 1, None, "not_text", False
+        self.writes = []
+
+    def copy(self, text, kind="ok"):  # what the user copying something looks like
+        self.seq += 1
+        self.text, self.kind = text, kind
+
+    def sequence(self):
+        return self.seq
+
+    def read(self):
+        from kmshare.clipboard import ClipboardBusy
+
+        if self.busy:
+            raise ClipboardBusy("busy")
+        return (self.text, "ok") if self.kind == "ok" else (None, self.kind)
+
+    def write(self, text):
+        from kmshare.clipboard import ClipboardBusy
+
+        if self.busy:
+            raise ClipboardBusy("busy")
+        self.copy(text)
+        self.writes.append(text)
+
+
+@pytest.fixture(autouse=True)
+def fake_clipboard(monkeypatch):
+    from kmshare import clipboard
+
+    monkeypatch.setattr(clipboard, "WinClipboard", FakeClipboard)
+
+
 @pytest.fixture(scope="session")
 def master():
     return derive_master_key("correct horse battery staple")

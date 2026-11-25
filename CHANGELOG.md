@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Clipboard sharing (text):** text copied on one PC is there to paste on the other after control switches, in both directions. The PC giving up control sends its clipboard, and only if it changed since the last switch; received text isn't sent back.
+  - Not sent: images and files, text over `[clipboard] max_kb` (default 1024), content a password manager marks private, and whatever was on the clipboard when kmshare started.
+  - On/off with `[features] clipboard` on each PC and a launch question; it only runs when both PCs have it on (they tell each other after connecting). An older kmshare on the other PC counts as off.
+  - Text goes in 8000-character chunks inside the encrypted link. Clipboard work runs on its own thread, so a busy clipboard can't stall input.
+
 ## 0.2.1 (2026-11-25)
 
 - **Fixed:** switching back and forth quickly could trap the cursor on the client: it was pushed to the client's left edge and only moved vertically. If the server's frozen cursor moved even once while the client was in control, every later move carried that offset. Moves are now measured from the server cursor's real position, and the server logs `server cursor slipped <n> px …` when it happens.

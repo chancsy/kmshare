@@ -24,7 +24,7 @@ import time
 import winsound
 from typing import Callable
 
-from . import winput
+from . import clipboard, winput
 from .channel import AuthError, Channel, ChannelClosed, server_handshake
 from .config import Config
 from .edge import OPPOSITE, SIDES, EdgeDetector, MonitorCache, entry_point
@@ -88,6 +88,7 @@ class Server:
         self.remote = False
         self._anchor = (0, 0)
         self._saved_pos: tuple[int, int] | None = None
+        self._clip = clipboard.ClipboardSync(cfg.clipboard, cfg.clipboard_max_kb * 1024, "the client")
         self._slip_warned = False  # one warning per REMOTE session
         self._pressed: set[int] = set()     # physically held keys (for hotkey detection)
         self._local_down: set[int] = set()  # pressed while LOCAL: their key-ups stay local
@@ -101,6 +102,7 @@ class Server:
         srv.settimeout(0.5)
         self.port = srv.getsockname()[1]
         threading.Thread(target=self._sender_loop, args=(stop,), name="kmshare-send", daemon=True).start()
+        self._clip.start()
         if hooks:
             self._start_hooks()
         log.info("server listening on %s:%d, waiting for a client ...", self.cfg.bind, self.port)
@@ -158,6 +160,8 @@ class Server:
             gen = self._gen
             self._chan, self._peer = chan, peer
             self._last_pong = time.monotonic()
+            self._clip.connected(self._send_now)
+            self._send(self._clip.caps_msg())
         log.info("client connected: %s  (press %s to control it)", peer, self.cfg.hotkey.text)
         threading.Thread(target=self._reader_loop, args=(chan, gen), daemon=True).start()
         if self.cfg.edge_switch:
@@ -190,6 +194,11 @@ class Server:
                             self._last_pong = time.monotonic()
                 elif t == "leave":
                     self._on_client_leave(gen, msg)
+                elif t in ("caps", "clip"):
+                    with self._lock:
+                        if gen != self._gen:
+                            continue
+                    (self._clip.on_caps if t == "caps" else self._clip.receive)(msg)
         except (ChannelClosed, AuthError, OSError, ValueError) as e:
             self._drop(gen, str(e) or type(e).__name__)
 
@@ -216,6 +225,7 @@ class Server:
     def _close_current(self, reason: str) -> None:
         chan, self._chan = self._chan, None
         self.side, self._edge = None, None
+        self._clip.disconnected()
         if chan is not None:
             chan.close()
             log.info("client %s disconnected (%s)", self._peer, reason)
@@ -230,6 +240,12 @@ class Server:
             elif now - self._last_ping >= self.cfg.ping_interval:
                 self._last_ping = now
                 self._send({"t": "ping"})
+
+    def _send_now(self, msg: dict) -> None:
+        """Queue a message from outside the lock (clipboard worker)."""
+        with self._lock:
+            if self._chan is not None:
+                self._send(msg)
 
     def _send(self, msg: dict) -> None:
         """Queue a message for the current connection (call with the lock held)."""
@@ -272,6 +288,7 @@ class Server:
             return
         # Freeze the cursor where it is: suppressed moves don't move it, and their targets
         # relative to this spot give the motion to send.
+        self._clip.offer()  # text copied here goes along (worker thread, after "enter")
         self._saved_pos = self._anchor = winput.cursor_pos()
         self._stale_anchor = None
         self._slip_warned = False

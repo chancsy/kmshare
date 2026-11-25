@@ -128,12 +128,18 @@ def _interactive_settings(role: str, cfg: Config) -> Config:
         timeout = _ask("  Drop the link after silence of, seconds", timeout_default, _seconds(ping))
         cfg = dataclasses.replace(cfg, port=port, bind=bind, hotkey=hotkey, beep=beep,
                                   ping_interval=ping, peer_timeout=timeout)
-        return _ask_edge(cfg)
+        return _ask_clipboard(_ask_edge(cfg))
     host = _ask("  Server address (IP or host name)", cfg.server_host, _not_empty)
     port = _ask("  Port", str(cfg.port), _port)
     timeout = _ask("  Drop the link after silence of, seconds", f"{cfg.peer_timeout:g}",
                    _seconds(cfg.ping_interval))
-    return dataclasses.replace(cfg, server_host=host, port=port, peer_timeout=timeout)
+    return _ask_clipboard(dataclasses.replace(cfg, server_host=host, port=port, peer_timeout=timeout))
+
+
+def _ask_clipboard(cfg: Config) -> Config:
+    on = _ask("  Share copied text with the other PC when control switches (y/n)",
+              "y" if cfg.clipboard else "n", _yes_no)
+    return dataclasses.replace(cfg, clipboard=on)
 
 
 # --------------------------------------------------------------------------- main

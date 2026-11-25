@@ -11,27 +11,30 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
   - **client**: the PC that gets controlled.
 - **Push the cursor past the screen edge** to move it onto the other PC, and push it back past the opposite edge on the other PC to return. When a client connects, the server asks where it sits (left, right, top or bottom). Safeguards stop accidental switching; see [Edge switching](#edge-switching). It can be turned off.
 - **Ctrl+Shift+F12** on the server always works too: it hands control to the client, and pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor stays frozen where it was and ignores input.
+- **Copy on one PC, paste on the other.** Text you copy is there on the other PC after control switches (hotkey or edge), in both directions. Plain text only, up to 1 MB. Text copied before kmshare started, and anything a password manager marks private, is never sent. Both PCs must have it on; see [Clipboard](#clipboard).
 - **Protected by a shared key** that you type at every launch and that is never saved. A PC with the wrong key is rejected, and everything on the network is encrypted.
 - **Failsafes:** if the wifi drops or either side quits, the server goes back to local control within a few seconds, and the client releases any keys or buttons that were held down. Nothing stays stuck.
 - Every behaviour, including each failure case, is described in [BEHAVIOR.md](BEHAVIOR.md).
-- Port, server address, hotkey, edge switching and keep-alive timing are set in `kmshare.ini`.
+- Port, server address, hotkey, edge switching, clipboard sharing and keep-alive timing are set in `kmshare.ini`.
 
 What the server console shows:
 
 ```text
 09:42:45  server listening on 0.0.0.0:24800, waiting for a client ...
 09:43:02  client connected: 192.168.1.23:51544  (press Ctrl+Shift+F12 to control it)
+09:43:02  clipboard sharing on: copied text follows when control switches (up to 1.0 MB)
 
 Client 192.168.1.23:51544 connected. Where is it, seen from this PC?
   [l]eft  [r]ight  [t]op  [b]ottom   (Enter = right): r
 09:43:05  client 192.168.1.23:51544 is to the RIGHT: push the cursor past this PC's right edge to switch (or Ctrl+Shift+F12)
 09:43:10  -> REMOTE (right edge): keyboard/mouse now control 192.168.1.23:51544  (Ctrl+Shift+F12 to return)
+09:43:10  clipboard: sent 42 B of text to the client
 09:44:31  <- LOCAL (edge)
 ```
 
 ### What it doesn't do (yet)
 
-- Clipboard or file sharing (clipboard is planned, with its own on/off setting).
+- Sharing images, files or formatted text through the clipboard (plain text only), or copying files between PCs.
 - Dragging something across to the other PC. Switching is blocked while a mouse button is held.
 - Typing on the client's **lock screen**, **UAC prompts** or **Ctrl+Alt+Del**. Windows blocks injected input there.
 - More than one client at a time. A new client replaces the old one.
@@ -62,6 +65,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `kmshare/edge.py` | Edge detection, safeguards, monitor layouts, where the cursor appears after a crossing. |
 | `kmshare/channel.py` | Key derivation, handshake, encrypted message framing. |
 | `kmshare/winput.py` | Win32 cursor and `SendInput` wrappers. |
+| `kmshare/clipboard.py` | Clipboard sharing: Win32 text clipboard, chunked messages, its own worker thread. |
 | `kmshare/adminwatch.py` | Warns when the focused window runs as administrator and kmshare doesn't. |
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
 | `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
@@ -109,6 +113,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
      Drop the link after silence of, seconds [6]:
      Edge switching: push the cursor past the screen edge to switch (y/n) [y]:
      Change the edge-switching safeguards (y/n) [n]:
+     Share copied text with the other PC when control switches (y/n) [y]:
    Shared key (must match on both PCs):
    ```
    **On first launch, Windows Firewall may ask about Python.** Allow it on **Private networks**. If no prompt appeared and the client can't connect, add a rule from an **admin** PowerShell:
@@ -133,7 +138,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `79 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `102 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -145,6 +150,10 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
 | Switch back and forth over the edge as fast as you can, 20+ times | The cursor never gets stuck on the client; if the server logs `server cursor slipped …`, the fix caught it |
 | Control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
+| Untested: copy text on the server, switch to the client, paste | The text pastes on the client; server logs `clipboard: sent … of text to the client` |
+| Untested: copy text on the client, switch back, paste on the server | The text pastes on the server; client logs `clipboard: sent … of text to the server` |
+| Untested: copy an image (or a password from a password manager), switch | Not sent; the log says `not text, not sent` (or `marked private …`); the other PC's clipboard is unchanged |
+| Untested: set `clipboard = false` on the client only, reconnect, copy and switch | Both consoles log `clipboard sharing off (…)`; nothing is shared either way |
 | Focus an admin window on the server (for example the HoYoPlay launcher, with kmshare not run as administrator), then push past the edge | No switch; the server logs `focused window "…" runs as administrator: …`. Click another window: `admin window lost focus: …`, and switching works again |
 
 ## Commands
@@ -167,6 +176,8 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | `[network] server_host` | *(empty)* | Client: server address, offered as the default when asked. If it's empty and arguments are given without `--host`, you're asked for it. |
 | `[hotkey] toggle` | `ctrl+shift+f12` | Switch key. Modifiers are `ctrl`, `shift`, `alt`, `win`. Keys are `a`–`z`, `0`–`9`, `f1`–`f24`, `space`, `tab`, `home`, `end`, … |
 | `[features] edge_switch` | `true` | Edge switching on or off. Off = hotkey only, and the server doesn't ask where the client is. |
+| `[features] clipboard` | `true` | Clipboard sharing on or off, on each PC. It only runs when both PCs have it on. |
+| `[clipboard] max_kb` | `1024` | Largest clipboard text sent or accepted, in KB. Bigger is skipped and logged. |
 | `[layout] client_side` | `right` | Default answer to the server's "where is the client" question: `left`, `right`, `top`, `bottom`. |
 | `[layout] edge_push` | `8` | Pixels to push past the edge in total before switching (≥ 1). |
 | `[layout] edge_delay_ms` | `0` | Also keep pushing this long, in ms (0 = off). |
@@ -191,9 +202,18 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 - **The hotkey always works**, edge switching or not.
 
+## Clipboard
+
+- **When:** the PC giving up control sends its clipboard to the other one. Switching to the client sends the server's clipboard; coming back sends the client's. Copying while you stay on one PC sends nothing.
+- **Only new copies:** a clipboard is sent once, and only if it changed since the last switch. Text that just arrived from the other PC isn't sent back. What's on the clipboard when kmshare starts is never sent.
+- **Not sent** (and logged): images and files (`clipboard: not text, not sent`), text over `max_kb`, and anything the copying app marks private, which password managers such as KeePass and Bitwarden do (`… marked private by the app that copied it …`).
+- **On or off:** `[features] clipboard` on each PC, or the launch question. If either PC has it off, nothing is shared either way. Both consoles say which after connecting: `clipboard sharing on: …` or `clipboard sharing off (turned off on …)`.
+- Full rules, including what happens when another app has the clipboard open, are in [BEHAVIOR.md](BEHAVIOR.md), *Clipboard sharing*.
+
 ## Security notes & limitations
 
 - **What's exposed:** the server listens on TCP `port` on all adapters (`bind = 0.0.0.0`). Anyone who can connect still has to pass the key check, and the server handles one handshake at a time with a 1 s pause after each failure, which slows down guessing. Set `bind` to the server's LAN IP to listen on one adapter only.
+- **Clipboard text** goes over the same encrypted link as your typing, and only its size is logged. Turn `[features] clipboard` off on either PC if you don't want it shared at all.
 - **The key** is never written to disk. It's turned into an encryption key with scrypt, a deliberately slow function. A weak key could still be guessed offline by someone who records a handshake *by posing as your server*, so use a passphrase rather than a short password.
 - **Git ignores** `.dev/` (temporary files, pytest cache) and `__pycache__/`. `kmshare.ini` contains no secrets and is tracked.
 - **Admin windows (for example the HoYoPlay launcher, Task Manager, installers):** Windows hides input aimed at an admin window from a program that isn't running as administrator.

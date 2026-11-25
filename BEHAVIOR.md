@@ -17,13 +17,14 @@ Terms used below:
 4. [Hotkey](#4-hotkey)
 5. [Server: LOCAL and REMOTE modes](#5-server-local-and-remote-modes)
 6. [Edge switching](#6-edge-switching)
-7. [Server: connections](#7-server-connections)
-8. [Client](#8-client)
-9. [Failure and safety behaviour (all cases)](#9-failure-and-safety-behaviour-all-cases)
-10. [Security](#10-security)
-11. [Messages on the wire](#11-messages-on-the-wire)
-12. [Log messages](#12-log-messages)
-13. [Known gaps](#13-known-gaps)
+7. [Clipboard sharing](#7-clipboard-sharing)
+8. [Server: connections](#8-server-connections)
+9. [Client](#9-client)
+10. [Failure and safety behaviour (all cases)](#10-failure-and-safety-behaviour-all-cases)
+11. [Security](#11-security)
+12. [Messages on the wire](#12-messages-on-the-wire)
+13. [Log messages](#13-log-messages)
+14. [Known gaps](#14-known-gaps)
 
 ---
 
@@ -42,6 +43,7 @@ kmshare is built so that **any failure gives control back to the server's own ke
 | No accidental switching | Holding the hotkey doesn't keep flipping modes: auto-repeat and the key-up of the trigger key are swallowed. Edge switching needs a real push past an outer edge, ignores corners, never fires mid-drag, and can't bounce straight back ([Edge switching](#6-edge-switching)). |
 | No cursor yank on return | When control comes back and kmshare places the cursor, mouse movements Windows had already computed from the frozen spot are dropped, so they can't pull the cursor back there ([Switching REMOTE → LOCAL](#switching-remote--local)). |
 | Edge switching can't strand you | The hotkey works whatever the edge state. A `leave` from the client is only acted on while the server is REMOTE for that same connection. |
+| The clipboard can't stall input | Clipboard work runs on its own thread with short retries, never inside the hooks. Text copied before launch, or marked private by a password manager, is never sent. |
 | Nothing works without the key | No input is sent or replayed until both sides have proven they hold the same key. |
 
 ---
@@ -73,9 +75,11 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
    | server | `Keep pushing at least, ms (0 = off) [0]` | 0 or more |
    | server | `No switching this close to a corner, pixels [40]` | 0 or more |
    | server | `After a switch, move this far from the edge first, pixels [20]` | 0 or more |
+   | server | `Share copied text with the other PC when control switches (y/n) [y]` | y/n (default from `[features] clipboard`). Asked even if edge switching is off. |
    | client | `Server address (IP or host name) [<server_host>]` | required; if the ini value is empty, there's no default |
    | client | `Port [24800]` | 1–65535; must match the server |
    | client | `Drop the link after silence of, seconds [6]` | more than the ini's `ping_interval` |
+   | client | `Share copied text with the other PC when control switches (y/n) [y]` | y/n (default from `[features] clipboard`) |
 
    **Any argument given** (for example just `--role server`): no settings questions. Settings come from the ini and the arguments. The only extra question is the server address, for a client when neither `--host` nor `server_host` is set: `Server address (IP or host name):`, repeated until you type something.
 7. **Key:** `Shared key (must match on both PCs):`. Typing is hidden.
@@ -105,6 +109,8 @@ Note: kmshare can't tell whether the two keys match until the client connects. A
 | `[network] server_host` | empty | Client only. If empty, you're asked at launch. `--host` overrides it. |
 | `[hotkey] toggle` | `ctrl+shift+f12` | See [Hotkey](#4-hotkey). An invalid value is a config error. |
 | `[features] edge_switch` | `true` | Server only. Edge switching on/off. Off: no side question, hotkey only. |
+| `[features] clipboard` | `true` | Both PCs. Clipboard sharing on/off; it only runs when both PCs have it on ([Clipboard sharing](#7-clipboard-sharing)). |
+| `[clipboard] max_kb` | `1024` | Both PCs. Largest text sent or accepted, in KB (UTF-8). Must be ≥ 1. |
 | `[layout] client_side` | `right` | Server only. Default answer to the side question. One of `left`, `right`, `top`, `bottom` (any case); anything else is a config error. |
 | `[layout] edge_push` | `8` | Server only (sent to the client). Must be ≥ 1. |
 | `[layout] edge_delay_ms` | `0` | Server only (sent to the client). ≥ 0; 0 = no delay. |
@@ -158,7 +164,7 @@ The hotkey works at any time. An edge push only switches when a client is connec
 - Every physical key-down and key-up is **blocked on the server** and sent to the client with its virtual-key code, scan code and extended-key flag (so arrow keys, right Ctrl and right Alt stay distinct).
 - Exception 1: the key-up of a key that went down **before** switching to REMOTE goes to the server, not the client. Example: you're still holding Shift from the hotkey.
 - Exception 2: the hotkey trigger key (see [Hotkey](#4-hotkey)).
-- Windows-reserved combinations still act on the server (see [Known gaps](#13-known-gaps)).
+- Windows-reserved combinations still act on the server (see [Known gaps](#14-known-gaps)).
 
 **Mouse:**
 - All physical mouse events are **blocked on the server**, including types kmshare doesn't forward. The server's cursor stays frozen.
@@ -226,14 +232,57 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 ---
 
-## 7. Server: connections
+## 7. Clipboard sharing
+
+Text you copy on one PC is there to paste on the other after control switches. It's on unless `[features] clipboard = false` on **either** PC, or you answered `n` at launch.
+
+### When text moves
+
+| Event | What's sent |
+|---|---|
+| Server → REMOTE (hotkey or edge) | The **server's** clipboard goes to the client, queued right after `enter`, so it's there by the time you paste. |
+| Server → LOCAL (hotkey, edge, or anything else that sends the client `rel`) | The **client's** clipboard goes to the server. |
+| Anything else (copying while you stay on one PC, a lost link, a reconnect) | Nothing. |
+
+- **Only when it changed.** Each PC compares the Windows clipboard change counter (`GetClipboardSequenceNumber`) with the one it last looked at. Nothing new copied means nothing is sent, so switching back and forth doesn't resend the same text.
+- **No echo:** after putting received text on its own clipboard, a PC records the new counter, so the text isn't sent straight back on the next switch.
+- **What's on the clipboard when kmshare starts is never sent.** Only copies made after launch are shared, so something copied earlier (a password, say) doesn't leave the PC just because kmshare started.
+- **Each new clipboard is looked at once.** If it isn't sent (not text, private, too big), it isn't tried again on later switches; copy it again to retry. The exception is a busy clipboard, which is tried again on the next switch.
+
+### What's sent and what isn't
+
+| Clipboard holds | Result | Log (on the PC giving up control) |
+|---|---|---|
+| Plain text (any language, emoji) up to `[clipboard] max_kb` | Sent; the other PC replaces its clipboard with it | `clipboard: sent <size> of text to the client` / `… to the server`; the other PC logs `clipboard: got <size> of text from …` |
+| Text over `max_kb` (measured as UTF-8) | Not sent | `clipboard: <size> of text is over the <limit> limit, not sent` |
+| Received text over **this** PC's `max_kb` | Not applied | `clipboard: received <size>, over this PC's <limit> limit, not applied` (on the receiving PC) |
+| An image, files, or anything without a plain-text form | Not sent; the other PC's clipboard is left as it was | `clipboard: not text, not sent` |
+| Content marked private by the app that copied it (`ExcludeClipboardContentFromMonitorProcessing` or `Clipboard Viewer Ignore`, set by password managers such as KeePass and Bitwarden) | Not sent | `clipboard: marked private by the app that copied it (e.g. a password manager), not sent` |
+| Empty | Nothing | – |
+
+Rich text and HTML copies usually also carry plain text: that plain text is what's sent, without formatting. Text is cut at the first NUL character, as Windows' plain-text format does.
+
+### How it's done
+
+- **Both PCs must agree.** Right after connecting, each side sends `{"t":"caps","clip":true|false}`. Sharing runs only when both say `true`, and each side logs the result: `clipboard sharing on: …`, `clipboard sharing off (turned off on this PC)`, or `… (turned off on the client)` / `… on the server`. A peer that never sends `caps` (an older kmshare) counts as off.
+- **Receiving only needs this PC's setting.** With sharing off here, incoming clipboard messages are ignored.
+- **Chunks:** text is split into chunks of 8000 characters (at most 48 KB of JSON each, under the 64 KB message limit): `{"t":"clip","id":n,"i":k,"n":N,"d":"…"}`. The receiver puts them back together in order. A missing, repeated or out-of-order chunk drops that text. A 1 MB text is about 130 chunks and shares the connection with input, so mouse movement can pause briefly while it's sent.
+- **Its own thread.** All clipboard work runs on a `kmshare-clipboard` thread, never inside the input hooks, so a slow or busy clipboard can't stall the mouse or keyboard.
+- **Busy clipboard:** if another app has the clipboard open, kmshare tries 5 times over about 0.1 s, then gives up for this switch: `clipboard: another app had the clipboard open, not sent (tries again on the next switch)`, or `… received text not applied` on the receiving PC.
+- **Writing** uses a hidden message-only window as the clipboard owner (Windows needs a window for `SetClipboardData`). The window is destroyed straight after; the text stays on the clipboard.
+- **Link lost mid-send:** `clipboard: link lost while sending (<error>)`. The receiver drops the partial text when it disconnects.
+- **Encrypted** like all other traffic ([Security](#11-security)). Clipboard text never appears in the logs, only its size.
+
+---
+
+## 8. Server: connections
 
 | Situation | Behaviour |
 |---|---|
 | Startup | Listens on `bind:port` and logs `server listening on <bind>:<port>, waiting for a client ...` |
-| Incoming connection | Runs the handshake ([Security](#10-security)). **One handshake at a time.** Each one has a 5 s limit. |
+| Incoming connection | Runs the handshake ([Security](#11-security)). **One handshake at a time.** Each one has a 5 s limit. |
 | Handshake fails (`wrong key`, `not a kmshare client (or a different version)`, `handshake timed out`, `client hung up during handshake`, or a network error) | Logs `rejected <ip:port>: <reason>`, closes the connection, then **waits 1 s before taking the next handshake**. This limits key guessing to about one try per second. |
-| Handshake succeeds | Logs `client connected: <ip:port>  (press <hotkey> to control it)`. Stays in its current mode (LOCAL). If edge switching is on, asks which side the client is on (or reuses the answer for that IP) and sends it the layout ([Edge switching](#6-edge-switching)). |
+| Handshake succeeds | Logs `client connected: <ip:port>  (press <hotkey> to control it)`. Stays in its current mode (LOCAL). If edge switching is on, asks which side the client is on (or reuses the answer for that IP) and sends it the layout ([Edge switching](#6-edge-switching)). Sends `caps` with its clipboard setting ([Clipboard sharing](#7-clipboard-sharing)). |
 | A second client connects (correct key) while one is connected | The new client wins. If REMOTE, the server first switches to LOCAL (`client replaced`). The old connection is closed and logged as `client <old> disconnected (replaced by <new>)`. |
 | Keep-alive | Sends `ping` every `ping_interval` seconds. Each `pong` resets the timer. |
 | No `pong` for `peer_timeout` seconds | Drops the client: `no response from client`. Switches to LOCAL if needed. |
@@ -244,7 +293,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 ---
 
-## 8. Client
+## 9. Client
 
 ### Connecting
 
@@ -253,7 +302,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 | Startup | Logs `client: connecting to <host>:<port> ...` |
 | Server can't be reached (TCP connect has a 5 s limit) | Logs `cannot reach server …, retrying ...` **once per distinct error** (no repeated spam) and retries every **3 s**, forever. |
 | Handshake fails (wrong key, wrong program, timeout) | Logs `handshake failed: <reason>` (e.g. `server rejected the key`) and retries every **5 s**, forever. With the wrong key it keeps getting rejected until you restart it with the right key. |
-| Connected | Logs `connected to <host>:<port>. Waiting for the server's hotkey to take control` |
+| Connected | Logs `connected to <host>:<port>. Waiting for the server's hotkey to take control` and sends `caps` with its clipboard setting. |
 | Disconnected for any reason | **Releases every held key and button**, forgets the layout (a new one comes after reconnecting), logs `disconnected: <reason>`, waits 2 s, logs `reconnecting ...`, and goes back to connecting. |
 | No message from the server for `peer_timeout` seconds | Disconnects with `server not responding` (then as above). The server's pings keep this from happening on a healthy link. |
 | Ctrl+C in the client console | Releases every held key and button, closes the connection, prints `Stopped.` |
@@ -268,7 +317,9 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 | Wheel | Sends a vertical or horizontal wheel event with the exact amount received. |
 | `enter` | Marks this PC as controlled. With an entry edge: moves the cursor to the entry point and logs `server took control (came in over my <edge> edge)`. Without one (hotkey): leaves the cursor where it is and logs `server took control`. Either way it disarms its own edge until the cursor moves `edge_rearm` pixels away. |
 | `layout` | Stores its exit edge and the safeguard values, and logs `the server is on my <SIDE>: …`. From then on, while controlled, every received move is checked against that edge ([Edge switching](#6-edge-switching)). On a push: sends `leave` once and logs `pushed past the <side> edge, handing control back`. |
-| `rel` | Marks this PC as not controlled, releases every held key and button. Logs `server released control`. |
+| `rel` | Marks this PC as not controlled, releases every held key and button. Logs `server released control`. Then offers its clipboard to the server if something new was copied ([Clipboard sharing](#7-clipboard-sharing)). |
+| `caps` | Stores whether the server shares the clipboard, and logs whether sharing is on. |
+| `clip` | A clipboard chunk; the last one puts the text on this PC's clipboard. |
 | `ping` | Replies `pong`. |
 | Malformed message (missing or wrong field) | Logs `ignored malformed message …` and continues. |
 | Unknown message type | Ignored without a log line (leaves room for later versions). |
@@ -278,7 +329,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 ---
 
-## 9. Failure and safety behaviour (all cases)
+## 10. Failure and safety behaviour (all cases)
 
 | Event | Server | Client |
 |---|---|---|
@@ -299,6 +350,8 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 | Hotkey held down | Switches once (auto-repeat swallowed) | – |
 | Cursor pushed into a screen corner, or along the edge with a button held | No switch | No switch back |
 | You press the hotkey just as the client sends `leave` | Hotkey wins; the late `leave` is ignored | Released by `rel` as usual |
+| Another app holds the clipboard open at a switch | That clipboard isn't sent or applied this time; logged; input isn't delayed | Same |
+| Link drops while clipboard chunks are in flight | Partial text discarded; nothing half-written to the clipboard | Same |
 | Client disconnects while the side question is open | The answer is still remembered for that IP; edge switching stays off until it reconnects | Reconnects; no question the second time |
 | Wifi drops while the cursor is on the client after an edge crossing | → LOCAL within `peer_timeout`, cursor back where it crossed | Releases everything |
 | You're still moving the mouse at the moment control returns over the edge | Moves computed from the frozen spot are dropped (race guard); the cursor stays at the return point | – |
@@ -306,9 +359,9 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 ---
 
-## 10. Security
+## 11. Security
 
-**What's protected:** everything sent between the two PCs (every key, so passwords too) is encrypted and authenticated. Input from anyone who doesn't have the key is never accepted.
+**What's protected:** everything sent between the two PCs (every key, so passwords too, and clipboard text) is encrypted and authenticated. Input from anyone who doesn't have the key is never accepted.
 
 **Key derivation:**
 - `master = scrypt(key, salt="kmshare/v1/kdf", n=2^15, r=8, p=1)`, giving 32 bytes.
@@ -340,7 +393,7 @@ session_key     = HMAC-SHA256(master, "session"|sn|cn)
 
 ---
 
-## 11. Messages on the wire
+## 12. Messages on the wire
 
 Each message is compact JSON, inside the encryption.
 
@@ -356,11 +409,13 @@ Each message is compact JSON, inside the encryption.
 | S → C | `{"t":"rel"}` | Release everything (server switched to LOCAL) |
 | S → C | `{"t":"ping"}` | Keep-alive |
 | C → S | `{"t":"pong"}` | Keep-alive reply |
+| both | `{"t":"caps","clip":true}` | Sent once after connecting: is clipboard sharing on here? |
+| both | `{"t":"clip","id":3,"i":0,"n":2,"d":"…"}` | Clipboard text, chunk `i` of `n` (8000 characters each) |
 | C → S | `{"t":"leave","f":0.42}` | The client was pushed past its exit edge at this position (0–1, across the client's whole desktop); hand control back |
 
 ---
 
-## 12. Log messages
+## 13. Log messages
 
 Timestamps are `HH:MM:SS`. `-v` adds debug output.
 
@@ -368,7 +423,7 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 |---|---|---|
 | S | `server listening on <bind>:<port>, waiting for a client ...` | Started |
 | S | `client connected: <ip:port>  (press <hotkey> to control it)` | Client passed the handshake |
-| S | `rejected <ip:port>: <reason>` | Handshake failed (see [Connections](#7-server-connections)) |
+| S | `rejected <ip:port>: <reason>` | Handshake failed (see [Connections](#8-server-connections)) |
 | S | `Client <ip:port> connected. Where is it, seen from this PC?` | Side question (see [Edge switching](#6-edge-switching)) |
 | S | `client <ip:port> is to the <SIDE>: push the cursor past this PC's <side> edge to switch (or <hotkey>)` | Edge switching active for this client |
 | S | `-> REMOTE (hotkey)…` / `-> REMOTE (<side> edge)…` | Switched to REMOTE |
@@ -391,10 +446,14 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 | C | `pushed past the <side> edge, handing control back` | Sent `leave` |
 | C | `disconnected: <reason>` then `reconnecting ...` | Link lost; everything held was released |
 | C | `ignored malformed message …` | Bad message (skipped) |
+| S, C | `clipboard sharing on: …` / `clipboard sharing off (turned off on …)` | Result of the `caps` exchange after connecting |
+| S, C | `clipboard: sent <size> of text to …` / `clipboard: got <size> of text from …` | Clipboard text moved |
+| S, C | `clipboard: not text, not sent` / `… marked private …, not sent` / `… over the <limit> limit, not sent` | New clipboard content that isn't shared ([Clipboard sharing](#7-clipboard-sharing)) |
+| S, C | `clipboard: another app had the clipboard open, …` / `clipboard: link lost while sending (…)` | Clipboard skipped this time |
 
 ---
 
-## 13. Known gaps
+## 14. Known gaps
 
 - **Secure desktop:** lock screen, UAC prompts and Ctrl+Alt+Del can't be controlled on the client, and the server's hooks can't see them.
 - **Shortcuts Windows reserves on the server:** Ctrl+Alt+Del always acts on the server. Win+L locks the server; the hook can't stop it (untested).
@@ -404,7 +463,8 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
   - kmshare checks the focused window twice a second and logs a warning when this applies; it can't work around it without running as administrator.
 - **Keyboard layout:** keys are sent as virtual-key codes, so both PCs should use the same layout.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
-- **Not implemented yet:** clipboard sync, dragging things across PCs, more than one client at a time, operating systems other than Windows.
+- **Clipboard:** plain text only (no images, files or formatting), and only when control switches, not on every copy.
+- **Not implemented yet:** dragging things across PCs, more than one client at a time, operating systems other than Windows.
 - **The side answer can't be changed while the server runs.** Restart the server to answer again.
 - **The server may go idle while REMOTE** (untested): its own input is blocked before Windows handles it, so Teams presence, the screen saver or the lock may start on the server during long sessions on the client.
 - **While REMOTE, the server's cursor stays visible** where it was frozen (it isn't hidden).

@@ -7,7 +7,7 @@ import socket
 import threading
 import time
 
-from . import winput
+from . import clipboard, winput
 from .channel import AuthError, Channel, ChannelClosed, client_handshake
 from .config import Config
 from .edge import SIDES, EdgeDetector, EdgeSettings, MonitorCache, entry_point
@@ -28,6 +28,7 @@ class Client:
         self._edge: EdgeDetector | None = None  # set by the server's "layout" message
         self._active = False      # the server is currently controlling this PC
         self._leave_sent = False  # sent "leave", waiting for the server to take over
+        self._clip = clipboard.ClipboardSync(cfg.clipboard, cfg.clipboard_max_kb * 1024, "the server")
 
     def run(self, stop: threading.Event | None = None) -> None:
         stop = stop or threading.Event()
@@ -59,6 +60,8 @@ class Client:
 
     def _session(self, chan: Channel, stop: threading.Event) -> None:
         chan.sock.settimeout(0.5)  # poll so Ctrl+C / stop / silence detection work
+        self._clip.connected(chan.send)
+        chan.send(self._clip.caps_msg())
         last = time.monotonic()
         try:
             while not stop.is_set():
@@ -75,6 +78,7 @@ class Client:
         finally:
             self.injector.release_all()  # never leave keys/buttons stuck down
             self._edge, self._active = None, False
+            self._clip.disconnected()
             chan.close()
 
     def _handle(self, chan: Channel, msg: dict) -> None:
@@ -114,6 +118,11 @@ class Client:
                 self._active = False
                 inj.release_all()
                 log.info("server released control")
+                self._clip.offer()  # text copied here goes back to the server
+            elif t == "caps":
+                self._clip.on_caps(msg)
+            elif t == "clip":
+                self._clip.receive(msg)
             elif t == "layout":
                 side = msg.get("side")
                 if side in SIDES:
