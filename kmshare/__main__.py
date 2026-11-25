@@ -13,10 +13,11 @@ import dataclasses
 import getpass
 import logging
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, TypeVar
 
-from . import __version__, winput
+from . import __version__, adminwatch, winput
 from .channel import derive_master_key
 from .config import DEFAULT_INI, Config, load_config
 from .edge import EdgeSettings
@@ -175,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
         print("Warning: keys shorter than 8 characters are easy to guess.")
     master = derive_master_key(passphrase)
     del passphrase
+
+    try:  # warn when an admin window takes focus; never block the launch
+        adminwatch.start(role, threading.Event(), cfg.hotkey.text)
+    except Exception as e:
+        logging.getLogger("kmshare").debug("admin focus watch not started: %s", e)
 
     try:
         if role == "server":

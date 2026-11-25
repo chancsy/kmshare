@@ -33,6 +33,7 @@ def run(monkeypatch, tmp_path):
     monkeypatch.setattr(launcher, "derive_master_key", lambda p: b"k" * 32)
     monkeypatch.setattr(launcher.getpass, "getpass", lambda prompt="": "a long enough key")
     monkeypatch.setattr(launcher, "DEFAULT_INI", ini)
+    monkeypatch.setattr(launcher.adminwatch, "start", lambda *a, **k: False)
 
     def _run(answers, argv):
         it = iter(answers)
