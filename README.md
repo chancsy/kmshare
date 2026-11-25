@@ -6,7 +6,7 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
 
 ## What it does
 
-- You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays, then asks for each setting one at a time. Enter keeps the default shown in brackets, which comes from `kmshare.ini`. The roles:
+- You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays, then whether to use the settings in `kmshare.ini` as they are. Press Enter for yes, and only the key (plus the server address on the client) is asked. Answer `n` to go through each setting one at a time; Enter keeps the default shown in brackets, which comes from `kmshare.ini`. The roles:
   - **server**: the PC whose keyboard and mouse you're using.
   - **client**: the PC that gets controlled.
 - **Push the cursor past the screen edge** to move it onto the other PC, and push it back past the opposite edge on the other PC to return. When a client connects, the server asks where it sits (left, right, top or bottom). Safeguards stop accidental switching; see [Edge switching](#edge-switching). It can be turned off.
@@ -95,15 +95,23 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    python -m pip install -r requirements.txt
    ```
    Every `python` command below assumes this venv is active and the current folder is `<repo>`. kmshare isn't installed as a package, so `python -m kmshare` only works from `<repo>`.
-2. **Optional: edit `kmshare.ini`.** Every setting is asked at launch anyway; the ini only sets the defaults shown in brackets, so you can just press Enter. On the client it's worth setting `server_host` to the server PC's IP address or host name, which you find by running `ipconfig` on the server and reading the "IPv4 Address" line. `port` must be the same on both PCs.
+2. **Optional: edit `kmshare.ini`.** With the quick start (Enter at `Use the settings in kmshare.ini …`), these are the settings used. If you answer `n` there, each setting is asked and the ini only sets the defaults shown in brackets. On the client it's worth setting `server_host` to the server PC's IP address or host name, which you find by running `ipconfig` on the server and reading the "IPv4 Address" line. `port` must be the same on both PCs.
 3. **Start the server** (on the PC with the keyboard and mouse you want to use):
    ```powershell
    cd <repo>
    python -m kmshare
    ```
-   Answer `s`, press Enter at each setting to keep its default, then type a key. Use the same key on both PCs and make it at least 8 characters; a short phrase works well.
+   Answer `s`, press Enter to use the ini's settings, then type a key. Use the same key on both PCs and make it at least 8 characters; a short phrase works well.
    ```text
    Role [s/c]: s
+   Use the settings in kmshare.ini and only ask for the key (y/n) [y]:
+     Using: port 24800, hotkey Ctrl+Shift+F12, edge switching on, clipboard sharing on
+   Shared key (must match on both PCs):
+   ```
+   To change a setting for this run only, answer `n` instead; each setting is then asked, and Enter keeps the value in brackets:
+   ```text
+   Role [s/c]: s
+   Use the settings in kmshare.ini and only ask for the key (y/n) [y]: n
    Settings (press Enter to keep the value in [brackets], from the ini):
      Port [24800]:
      Listen address (0.0.0.0 = all adapters) [0.0.0.0]:
@@ -121,7 +129,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    New-NetFirewallRule -DisplayName "kmshare" -Direction Inbound -Protocol TCP -LocalPort 24800 -Action Allow -Profile Private
    ```
    Also make sure the wifi network is set to **Private** in Windows: Settings → Network & internet → Wi-Fi → (your network) → Network profile type.
-4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, type the server's address (or press Enter if `server_host` is set in the ini), keep the other defaults, and type the same key. You should see:
+4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, press Enter to use the ini's settings, type the server's address (or press Enter if `server_host` is set in the ini), and type the same key. You should see:
    ```text
    connected to 192.168.1.10:24800. Waiting for the server's hotkey to take control
    ```
@@ -138,7 +146,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `102 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `104 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -162,7 +170,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Command | What it does |
 |---|---|
-| `python -m kmshare` | **Interactive:** asks for the role, then each setting (Enter keeps the ini default), then the key, then runs. Answers aren't saved. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
+| `python -m kmshare` | **Interactive:** asks for the role, then whether to use the ini's settings as they are (Enter = yes; a client is then asked only for the server address). `n` asks each setting (Enter keeps the ini default). Then the key, then runs. Answers aren't saved. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
 | `python -m kmshare --role server` | **Any argument skips the settings questions** and uses the ini as it is; only the key is asked. |
 | `python -m kmshare --role client --host 192.168.1.10` | Client using this server address, overriding the ini. |
 | `python -m kmshare --config D:\other.ini` | Uses a different ini file. |

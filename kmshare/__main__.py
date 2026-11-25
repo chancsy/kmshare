@@ -1,7 +1,9 @@
 """Launcher. Usage: python -m kmshare [--role server|client] [--host H] [--config F] [-v]
 
-With no arguments the launcher is interactive: it asks for the role, then each
-setting that role uses (Enter keeps the default from kmshare.ini), then the key.
+With no arguments the launcher is interactive: it asks for the role, then whether to
+use the ini's settings as they are (a client is then only asked for the server address).
+Answering n asks each setting that role uses (Enter keeps the default from kmshare.ini).
+Then it asks for the key.
 With any argument it takes settings from the ini + arguments and only asks for
 what is still missing (role, client server address) and the key.
 """
@@ -136,6 +138,20 @@ def _interactive_settings(role: str, cfg: Config) -> Config:
     return _ask_clipboard(dataclasses.replace(cfg, server_host=host, port=port, peer_timeout=timeout))
 
 
+def _quick_settings(role: str, cfg: Config) -> Config:
+    """The ini's settings as they are; a client is still asked for the server address."""
+    if role == "client":
+        cfg = dataclasses.replace(cfg, server_host=_ask("  Server address (IP or host name)",
+                                                        cfg.server_host, _not_empty))
+    on_off = lambda v: "on" if v else "off"  # noqa: E731
+    parts = [f"port {cfg.port}"]
+    if role == "server":
+        parts += [f"hotkey {cfg.hotkey.text}", f"edge switching {on_off(cfg.edge_switch)}"]
+    parts.append(f"clipboard sharing {on_off(cfg.clipboard)}")
+    print("  Using: " + ", ".join(parts))
+    return cfg
+
+
 def _ask_clipboard(cfg: Config) -> Config:
     on = _ask("  Share copied text with the other PC when control switches (y/n)",
               "y" if cfg.clipboard else "n", _yes_no)
@@ -167,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"kmshare {__version__}: keyboard/mouse sharing  (config: {args.config})")
     role = args.role or _ask_role()
     if interactive:
-        cfg = _interactive_settings(role, cfg)
+        asked = "the server address and key" if role == "client" else "the key"
+        if _ask(f"Use the settings in {args.config.name} and only ask for {asked} (y/n)", "y", _yes_no):
+            cfg = _quick_settings(role, cfg)
+        else:
+            cfg = _interactive_settings(role, cfg)
     elif role == "client":
         host = args.host or cfg.server_host
         while not host:

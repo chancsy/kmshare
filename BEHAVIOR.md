@@ -59,7 +59,10 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 5. **Role:** taken from `--role`, otherwise you're asked `Role [s/c]:` (`s`, `server`, `c` or `client`, any case). The question repeats until the answer is valid.
 6. **Settings.** What happens depends on whether any argument was given.
 
-   **No arguments (interactive):** you're asked for each setting the chosen role uses, one at a time. The value in `[brackets]` comes from the ini, and **Enter keeps it**. An invalid answer prints `Invalid: <reason>` and the same question is asked again. Answers apply to **this run only** and are not saved to the ini.
+   **No arguments (interactive):** first `Use the settings in kmshare.ini and only ask for the key (y/n) [y]` (the client's says `… the server address and key …`).
+
+   - **`y` or Enter (quick start):** the ini's settings are used as they are. A client is still asked `Server address (IP or host name) [<server_host>]` (Enter keeps the ini value; required if it's empty). Then one line shows the main settings in use, for example `  Using: port 24800, hotkey Ctrl+Shift+F12, edge switching on, clipboard sharing on` (the client's shows port and clipboard only).
+   - **`n`:** you're asked for each setting the chosen role uses, one at a time. The value in `[brackets]` comes from the ini, and **Enter keeps it**. An invalid answer prints `Invalid: <reason>` and the same question is asked again. Answers apply to **this run only** and are not saved to the ini.
 
    | Role | Question | Accepts |
    |---|---|---|
@@ -100,7 +103,7 @@ Note: kmshare can't tell whether the two keys match until the client connects. A
 
 ## 3. Configuration
 
-`kmshare.ini` is read once at launch; restart kmshare to apply changes. With no arguments, its values become the defaults offered at the settings questions ([Launch](#2-launch)); the answers are not written back. A missing section or key uses the default. Comments start with `;` or `#`, including at the end of a line.
+`kmshare.ini` is read once at launch; restart kmshare to apply changes. With no arguments, its values are used as they are after the quick-start question, or become the defaults offered at each settings question if you answer `n` ([Launch](#2-launch)); the answers are not written back. A missing section or key uses the default. Comments start with `;` or `#`, including at the end of a line.
 
 | Key | Default | Rules |
 |---|---|---|

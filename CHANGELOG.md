@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Quick start:** after the role, `Use the settings in kmshare.ini and only ask for the key (y/n) [y]`. Enter uses the ini's settings as they are, so the server only asks for the key and the client for the server address and key; a `Using: …` line shows the main settings. Answer `n` to be asked each setting as before.
+
 ## 0.3.0 (2026-11-25)
 
 - **Clipboard sharing (text):** text copied on one PC is there to paste on the other after control switches, in both directions. The PC giving up control sends its clipboard, and only if it changed since the last switch; received text isn't sent back.

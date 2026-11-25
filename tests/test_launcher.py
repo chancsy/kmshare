@@ -49,7 +49,7 @@ def run(monkeypatch, tmp_path):
 
 
 def test_no_args_server_all_defaults(run):
-    code, cap, prompts = run(["s", "", "", "", "", "", "", "", "", ""], [])
+    code, cap, prompts = run(["s", "n", "", "", "", "", "", "", "", "", ""], [])
     assert code == 0 and cap["role"] == "server"
     cfg = cap["cfg"]
     assert (cfg.port, cfg.bind, cfg.hotkey.text, cfg.beep, cfg.ping_interval, cfg.peer_timeout) == (
@@ -60,7 +60,7 @@ def test_no_args_server_all_defaults(run):
 
 
 def test_no_args_server_custom_values_and_reprompt(run):
-    answers = ["s", "99999", "5000", "", "nope+x", "ctrl+alt+k", "n", "1", "0.5", "3",
+    answers = ["s", "n", "99999", "5000", "", "nope+x", "ctrl+alt+k", "n", "1", "0.5", "3",
                "y", "y", "0", "5", "150", "10", "15", "n"]
     code, cap, prompts = run(answers, [])
     cfg = cap["cfg"]
@@ -74,13 +74,13 @@ def test_no_args_server_custom_values_and_reprompt(run):
 
 
 def test_no_args_server_edge_off(run):
-    code, cap, prompts = run(["s", "", "", "", "", "", "", "n", ""], [])
+    code, cap, prompts = run(["s", "n", "", "", "", "", "", "", "n", ""], [])
     assert not cap["cfg"].edge_switch
     assert not any("safeguards" in p for p in prompts)
 
 
 def test_no_args_client(run):
-    code, cap, prompts = run(["c", "", "24801", "", ""], [])
+    code, cap, prompts = run(["c", "n", "", "24801", "", ""], [])
     assert cap["role"] == "client" and cap["host"] == "10.0.0.5"
     assert cap["cfg"].port == 24801
     assert "  Server address (IP or host name) [10.0.0.5]: " in prompts
@@ -94,3 +94,21 @@ def test_args_skip_settings_prompts(run):
 def test_role_only_arg_asks_nothing_else_for_server(run):
     code, cap, prompts = run([], ["--role", "server"])
     assert code == 0 and cap["role"] == "server" and prompts == []
+
+
+def test_quick_start_server_asks_nothing_but_the_key(run, capsys):
+    code, cap, prompts = run(["s", ""], [])
+    assert code == 0 and cap["role"] == "server"
+    assert prompts == ["Role [s/c]: ", "Use the settings in k.ini and only ask for the key (y/n) [y]: "]
+    cfg = cap["cfg"]
+    assert (cfg.port, cfg.hotkey.text, cfg.edge_switch, cfg.clipboard) == (24800, "Ctrl+Shift+F12", True, True)
+    assert "  Using: port 24800, hotkey Ctrl+Shift+F12, edge switching on, clipboard sharing on" in capsys.readouterr().out
+
+
+def test_quick_start_client_asks_only_the_server_address(run, capsys):
+    code, cap, prompts = run(["c", "y", "192.168.0.9"], [])
+    assert code == 0 and cap["host"] == "192.168.0.9" and cap["cfg"].port == 24800
+    assert prompts == ["Role [s/c]: ",
+                       "Use the settings in k.ini and only ask for the server address and key (y/n) [y]: ",
+                       "  Server address (IP or host name) [10.0.0.5]: "]
+    assert "  Using: port 24800, clipboard sharing on" in capsys.readouterr().out
