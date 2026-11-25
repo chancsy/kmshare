@@ -29,6 +29,7 @@ def no_cursor(monkeypatch):
     monkeypatch.setattr(winput, "cursor_pos", lambda: state["pos"])
     monkeypatch.setattr(winput, "set_cursor_pos", lambda x, y: state["sets"].append((x, y)))
     monkeypatch.setattr(winput, "primary_center", lambda: (960, 540))
+    monkeypatch.setattr(winput, "monitors", lambda: [(0, 0, 1920, 1080)])
     return state
 
 
@@ -55,6 +56,9 @@ class FakeInjector:
 
     def release_all(self):
         self._rec("release_all")
+
+    def any_button_held(self):
+        return False
 
 
 @pytest.fixture

@@ -12,13 +12,16 @@ import ctypes
 import logging
 import queue
 import socket
+import sys
 import threading
 import time
 import winsound
+from typing import Callable
 
 from . import winput
 from .channel import AuthError, Channel, ChannelClosed, server_handshake
 from .config import Config
+from .edge import OPPOSITE, SIDES, EdgeDetector, MonitorCache, entry_point
 
 log = logging.getLogger("kmshare.server")
 
@@ -34,9 +37,36 @@ LLKHF_EXTENDED, LLKHF_LOWER_IL_INJECTED, LLKHF_INJECTED = 0x01, 0x02, 0x10
 LLMHF_INJECTED, LLMHF_LOWER_IL_INJECTED = 0x01, 0x02
 
 
+def console_choose_side(peer: str, default: str) -> str:
+    """Ask in the server console where a newly connected client sits. Enter = ``default``."""
+    if not sys.stdin or not sys.stdin.isatty():
+        return default
+    keys = {s[0]: s for s in SIDES}
+    while True:
+        try:
+            answer = input(f"\nClient {peer} connected. Where is it, seen from this PC?\n"
+                           f"  [l]eft  [r]ight  [t]op  [b]ottom   (Enter = {default}): ").strip().lower()
+        except EOFError:
+            return default
+        if not answer:
+            return default
+        side = keys.get(answer[0]) if answer in keys or answer in SIDES else None
+        if side:
+            return side
+        print("  Please answer l, r, t or b.")
+
+
 class Server:
-    def __init__(self, cfg: Config, master_key: bytes):
+    def __init__(self, cfg: Config, master_key: bytes,
+                 choose_side: Callable[[str, str], str] | None = None):
         self.cfg = cfg
+        self._choose_side = choose_side or console_choose_side
+        self._prompt_lock = threading.Lock()
+        self._sides: dict[str, str] = {}  # client IP -> side, remembered while the server runs
+        self.side: str | None = None       # where the current client sits (None = hotkey only)
+        self._edge: EdgeDetector | None = None
+        self._mons = MonitorCache(lambda: winput.monitors())
+        self._buttons_down: set[str] = set()  # physical mouse buttons held (blocks edge switching)
         self.port = cfg.port
         self._master = master_key
         self._lock = threading.RLock()
@@ -120,16 +150,50 @@ class Server:
             self._last_pong = time.monotonic()
         log.info("client connected: %s  (press %s to control it)", peer, self.cfg.hotkey.text)
         threading.Thread(target=self._reader_loop, args=(chan, gen), daemon=True).start()
+        if self.cfg.edge_switch:
+            self._setup_layout(addr[0], peer, gen)
+
+    def _setup_layout(self, ip: str, peer: str, gen: int) -> None:
+        """Ask (once per client IP) where the client sits, then enable edge switching."""
+        side = self._sides.get(ip)
+        if side is None:
+            with self._prompt_lock:
+                side = self._choose_side(peer, self.cfg.client_side)
+            self._sides[ip] = side
+        with self._lock:
+            if gen != self._gen or self._chan is None:
+                return  # the client left while we were asking
+            self.side = side
+            self._edge = EdgeDetector(side, self.cfg.edge)
+            self._send({"t": "layout", "side": OPPOSITE[side], **self.cfg.edge.to_msg()})
+        log.info("client %s is to the %s: push the cursor past this PC's %s edge to switch (or %s)",
+                 peer, side.upper(), side, self.cfg.hotkey.text)
 
     def _reader_loop(self, chan: Channel, gen: int) -> None:
         try:
             while True:
-                if chan.recv().get("t") == "pong":
+                msg = chan.recv()
+                t = msg.get("t")
+                if t == "pong":
                     with self._lock:
                         if gen == self._gen:
                             self._last_pong = time.monotonic()
+                elif t == "leave":
+                    self._on_client_leave(gen, msg)
         except (ChannelClosed, AuthError, OSError, ValueError) as e:
             self._drop(gen, str(e) or type(e).__name__)
+
+    def _on_client_leave(self, gen: int, msg: dict) -> None:
+        """The client's cursor was pushed past its edge back towards us."""
+        try:
+            fraction = float(msg["f"])
+        except (KeyError, TypeError, ValueError):
+            return
+        with self._lock:
+            if gen != self._gen or not self.remote or self.side is None:
+                return  # e.g. the hotkey already switched back
+            place = entry_point(self.side, fraction, self._mons.get())
+            self._leave_remote("edge", place=place)
 
     def _drop(self, gen: int, reason: str) -> None:
         with self._lock:
@@ -141,6 +205,7 @@ class Server:
 
     def _close_current(self, reason: str) -> None:
         chan, self._chan = self._chan, None
+        self.side, self._edge = None, None
         if chan is not None:
             chan.close()
             log.info("client %s disconnected (%s)", self._peer, reason)
@@ -189,7 +254,8 @@ class Server:
         else:
             self._enter_remote()
 
-    def _enter_remote(self) -> None:
+    def _enter_remote(self, edge_fraction: float | None = None) -> None:
+        """Switch to REMOTE. ``edge_fraction`` set = crossed the edge (client places its cursor)."""
         if self._chan is None:
             log.warning("no client connected, staying LOCAL")
             self._beep(winsound.MB_ICONHAND)
@@ -198,15 +264,25 @@ class Server:
         self._anchor = winput.primary_center()
         winput.set_cursor_pos(*self._anchor)
         self.remote = True
-        self._send({"t": "enter"})
-        log.info("-> REMOTE: keyboard/mouse now control %s  (%s to return)", self._peer, self.cfg.hotkey.text)
+        if edge_fraction is not None and self.side is not None:
+            self._send({"t": "enter", "edge": OPPOSITE[self.side], "f": round(edge_fraction, 4)})
+            how = f"{self.side} edge"
+        else:
+            self._send({"t": "enter"})
+            how = "hotkey"
+        log.info("-> REMOTE (%s): keyboard/mouse now control %s  (%s to return)", how, self._peer,
+                 self.cfg.hotkey.text)
         self._beep(winsound.MB_OK)
 
-    def _leave_remote(self, reason: str) -> None:
+    def _leave_remote(self, reason: str, place: tuple[int, int] | None = None) -> None:
+        """Switch to LOCAL. ``place`` = where to put the cursor (edge return), else where it was."""
         self.remote = False
         self._send({"t": "rel"})
-        if self._saved_pos is not None:
-            winput.set_cursor_pos(*self._saved_pos)
+        target = place or self._saved_pos
+        if target is not None:
+            winput.set_cursor_pos(*target)
+        if self._edge is not None:
+            self._edge.disarm()  # no bounce: move away from the edge before it can switch again
         log.info("<- LOCAL (%s)", reason)
         self._beep(winsound.MB_ICONASTERISK)
 
@@ -248,7 +324,20 @@ class Server:
     def on_mouse(self, msg: int, x: int, y: int, mouse_data: int) -> bool:
         """Handle one physical mouse event. Returns True to suppress it locally."""
         with self._lock:
+            if msg in CLICKS:
+                name, down = CLICKS[msg]
+                (self._buttons_down.add if down else self._buttons_down.discard)(name)
+            elif msg in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+                name = "x1" if (mouse_data >> 16) & 0xFFFF == 1 else "x2"
+                (self._buttons_down.add if msg == WM_XBUTTONDOWN else self._buttons_down.discard)(name)
+
             if not self.remote:
+                if msg == WM_MOUSEMOVE and self._edge is not None and self._chan is not None:
+                    fraction = self._edge.update(winput.cursor_pos(), (x, y), self._mons.get(),
+                                                 buttons_held=bool(self._buttons_down))
+                    if fraction is not None:
+                        self._enter_remote(edge_fraction=fraction)
+                        return True
                 return False
             if msg == WM_MOUSEMOVE:
                 dx, dy = x - self._anchor[0], y - self._anchor[1]

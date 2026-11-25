@@ -27,6 +27,24 @@ def test_shipped_ini_loads():
     cfg = load_config(DEFAULT_INI)
     assert cfg.port == 24800
     assert cfg.hotkey.text == "Ctrl+Shift+F12"
+    assert cfg.edge_switch and cfg.client_side == "right"
+    assert (cfg.edge.push_px, cfg.edge.delay_ms, cfg.edge.corner_px, cfg.edge.rearm_px) == (8, 0, 40, 20)
+
+
+def test_ini_edge_settings(tmp_path):
+    p = tmp_path / "k.ini"
+    p.write_text("[features]\nedge_switch = false\n[layout]\nclient_side = Left\nedge_delay_ms = 200\n")
+    cfg = load_config(p)
+    assert (cfg.edge_switch, cfg.client_side, cfg.edge.delay_ms, cfg.edge.push_px) == (False, "left", 200, 8)
+
+
+@pytest.mark.parametrize("body", ["[layout]\nclient_side = up\n", "[layout]\nedge_push = 0\n",
+                                  "[layout]\nedge_corner = -1\n"])
+def test_ini_bad_edge_settings(tmp_path, body):
+    p = tmp_path / "k.ini"
+    p.write_text(body)
+    with pytest.raises(ValueError):
+        load_config(p)
 
 
 def test_ini_overrides(tmp_path):

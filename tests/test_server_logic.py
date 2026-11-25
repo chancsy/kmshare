@@ -104,3 +104,51 @@ def test_coalesce_moves():
 class _Closable:
     def close(self):
         pass
+
+
+# ---------------------------------------------------------------- edge switching
+@pytest.fixture
+def edge_srv(srv):
+    from kmshare.edge import EdgeDetector, EdgeSettings
+
+    srv.side = "right"
+    srv._edge = EdgeDetector("right", EdgeSettings(push_px=8))
+    return srv
+
+
+def test_edge_push_enters_remote_with_placement(edge_srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1923, 540, 0) is False   # 4 px past: not yet
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1925, 540, 0) is True    # 4 + 6 >= 8
+    assert edge_srv.remote
+    assert sent(edge_srv) == [{"t": "enter", "edge": "left", "f": round(540 / 1079, 4)}]
+
+
+def test_edge_blocked_while_button_held(edge_srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    edge_srv.on_mouse(0x0201, 1919, 540, 0)                         # left button down (drag)
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0) is False
+    edge_srv.on_mouse(0x0202, 1919, 540, 0)                         # released
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0) is True
+
+
+def test_no_edge_switching_without_layout(srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    assert srv.on_mouse(WM_MOUSEMOVE, 1990, 540, 0) is False and not srv.remote
+
+
+def test_client_leave_returns_local_at_matching_edge_and_disarms(edge_srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0)
+    sent(edge_srv)
+    edge_srv._on_client_leave(edge_srv._gen, {"t": "leave", "f": 0.25})
+    assert not edge_srv.remote
+    assert no_cursor["sets"][-1] == (1919, 270)                     # right edge, 25 % down
+    assert sent(edge_srv) == [{"t": "rel"}]
+    no_cursor["pos"] = (1919, 270)
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 270, 0) is False   # disarmed: no bounce back
+
+
+def test_stale_leave_ignored(edge_srv):
+    edge_srv._on_client_leave(edge_srv._gen, {"t": "leave", "f": 0.5})  # not REMOTE
+    assert not edge_srv.remote and sent(edge_srv) == []

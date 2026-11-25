@@ -83,6 +83,25 @@ def primary_center() -> tuple[int, int]:
     return user32.GetSystemMetrics(0) // 2, user32.GetSystemMetrics(1) // 2
 
 
+MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC,
+                                     ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+user32.EnumDisplayMonitors.argtypes = (wintypes.HDC, ctypes.POINTER(wintypes.RECT), MONITORENUMPROC, wintypes.LPARAM)
+user32.EnumDisplayMonitors.restype = wintypes.BOOL
+
+
+def monitors() -> list[tuple[int, int, int, int]]:
+    """All monitor rectangles (left, top, right, bottom), right/bottom exclusive, physical pixels."""
+    found: list[tuple[int, int, int, int]] = []
+
+    def cb(_hmon, _hdc, rect, _lparam):
+        r = rect.contents
+        found.append((r.left, r.top, r.right, r.bottom))
+        return True
+
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
+    return found or [(0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))]
+
+
 def _send(*inputs: INPUT) -> bool:
     arr = (INPUT * len(inputs))(*inputs)
     return user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT)) == len(inputs)
@@ -124,6 +143,9 @@ class Injector:
             self._keys[vk] = (scan, extended)
         else:
             self._keys.pop(vk, None)
+
+    def any_button_held(self) -> bool:
+        return bool(self._buttons)
 
     def release_all(self) -> None:
         for vk, (scan, extended) in list(self._keys.items()):

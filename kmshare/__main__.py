@@ -19,6 +19,7 @@ from typing import Callable, TypeVar
 from . import __version__, winput
 from .channel import derive_master_key
 from .config import DEFAULT_INI, Config, load_config
+from .edge import EdgeSettings
 from .hotkey import parse_hotkey
 
 T = TypeVar("T")
@@ -80,8 +81,38 @@ def _seconds(minimum: float = 0.0) -> Callable[[str], float]:
     return parse
 
 
+def _whole(minimum: int = 0) -> Callable[[str], int]:
+    def parse(s: str) -> int:
+        try:
+            v = int(s)
+        except ValueError:
+            raise ValueError("enter a whole number") from None
+        if v < minimum:
+            raise ValueError(f"must be {minimum} or more")
+        return v
+    return parse
+
+
 def _not_empty(s: str) -> str:
     return s
+
+
+def _ask_edge(cfg: Config) -> Config:
+    """Server: edge switching on/off, then (optionally) its safeguards."""
+    on = _ask("  Edge switching: push the cursor past the screen edge to switch (y/n)",
+              "y" if cfg.edge_switch else "n", _yes_no)
+    if not on:
+        return dataclasses.replace(cfg, edge_switch=False)
+    if not _ask("  Change the edge-switching safeguards (y/n)", "n", _yes_no):
+        return dataclasses.replace(cfg, edge_switch=True)
+    e = cfg.edge
+    edge = EdgeSettings(
+        push_px=_ask("    Push past the edge before switching, pixels", str(e.push_px), _whole(1)),
+        delay_ms=_ask("    Keep pushing at least, ms (0 = off)", str(e.delay_ms), _whole()),
+        corner_px=_ask("    No switching this close to a corner, pixels", str(e.corner_px), _whole()),
+        rearm_px=_ask("    After a switch, move this far from the edge first, pixels", str(e.rearm_px), _whole()),
+    )
+    return dataclasses.replace(cfg, edge_switch=True, edge=edge)
 
 
 def _interactive_settings(role: str, cfg: Config) -> Config:
@@ -94,8 +125,9 @@ def _interactive_settings(role: str, cfg: Config) -> Config:
         ping = _ask("  Keep-alive ping interval, seconds", f"{cfg.ping_interval:g}", _seconds())
         timeout_default = f"{max(cfg.peer_timeout, ping * 2):g}"
         timeout = _ask("  Drop the link after silence of, seconds", timeout_default, _seconds(ping))
-        return dataclasses.replace(cfg, port=port, bind=bind, hotkey=hotkey, beep=beep,
-                                   ping_interval=ping, peer_timeout=timeout)
+        cfg = dataclasses.replace(cfg, port=port, bind=bind, hotkey=hotkey, beep=beep,
+                                  ping_interval=ping, peer_timeout=timeout)
+        return _ask_edge(cfg)
     host = _ask("  Server address (IP or host name)", cfg.server_host, _not_empty)
     port = _ask("  Port", str(cfg.port), _port)
     timeout = _ask("  Drop the link after silence of, seconds", f"{cfg.peer_timeout:g}",

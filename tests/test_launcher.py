@@ -48,21 +48,32 @@ def run(monkeypatch, tmp_path):
 
 
 def test_no_args_server_all_defaults(run):
-    code, cap, prompts = run(["s", "", "", "", "", "", ""], [])
+    code, cap, prompts = run(["s", "", "", "", "", "", "", "", ""], [])
     assert code == 0 and cap["role"] == "server"
     cfg = cap["cfg"]
     assert (cfg.port, cfg.bind, cfg.hotkey.text, cfg.beep, cfg.ping_interval, cfg.peer_timeout) == (
         24800, "0.0.0.0", "Ctrl+Shift+F12", True, 2.0, 6.0)
+    assert cfg.edge_switch and cfg.edge.push_px == 8
     assert "  Port [24800]: " in prompts and "  Switch hotkey [Ctrl+Shift+F12]: " in prompts
 
 
 def test_no_args_server_custom_values_and_reprompt(run):
-    answers = ["s", "99999", "5000", "", "nope+x", "ctrl+alt+k", "n", "1", "0.5", "3"]
+    answers = ["s", "99999", "5000", "", "nope+x", "ctrl+alt+k", "n", "1", "0.5", "3",
+               "y", "y", "0", "5", "150", "10", "15"]
     code, cap, prompts = run(answers, [])
     cfg = cap["cfg"]
     assert (cfg.port, cfg.hotkey.text, cfg.beep, cfg.ping_interval, cfg.peer_timeout) == (
         5000, "Ctrl+Alt+K", False, 1.0, 3.0)
     assert prompts.count("  Port [24800]: ") == 2  # 99999 rejected, asked again
+    e = cfg.edge
+    assert cfg.edge_switch and (e.push_px, e.delay_ms, e.corner_px, e.rearm_px) == (5, 150, 10, 15)
+    assert prompts.count("    Push past the edge before switching, pixels [8]: ") == 2  # 0 rejected
+
+
+def test_no_args_server_edge_off(run):
+    code, cap, prompts = run(["s", "", "", "", "", "", "", "n"], [])
+    assert not cap["cfg"].edge_switch
+    assert not any("safeguards" in p for p in prompts)
 
 
 def test_no_args_client(run):

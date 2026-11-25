@@ -7,25 +7,30 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
 - You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays, then asks for each setting one at a time. Enter keeps the default shown in brackets, which comes from `kmshare.ini`. The roles:
   - **server**: the PC whose keyboard and mouse you're using.
   - **client**: the PC that gets controlled.
-- **Ctrl+Shift+F12** on the server hands control to the client. Pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor is parked and ignores input.
+- **Push the cursor past the screen edge** to move it onto the other PC, and push it back past the opposite edge on the other PC to return. When a client connects, the server asks where it sits (left, right, top or bottom). Safeguards stop accidental switching; see [Edge switching](#edge-switching). It can be turned off.
+- **Ctrl+Shift+F12** on the server always works too: it hands control to the client, and pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor is parked and ignores input.
 - **Protected by a shared key** that you type at every launch and that is never saved. A PC with the wrong key is rejected, and everything on the network is encrypted.
 - **Failsafes:** if the wifi drops or either side quits, the server goes back to local control within a few seconds, and the client releases any keys or buttons that were held down. Nothing stays stuck.
 - Every behaviour, including each failure case, is described in [BEHAVIOR.md](BEHAVIOR.md).
-- Port, server address, hotkey and keep-alive timing are set in `kmshare.ini`.
+- Port, server address, hotkey, edge switching and keep-alive timing are set in `kmshare.ini`.
 
 What the server console shows:
 
 ```text
 09:42:45  server listening on 0.0.0.0:24800, waiting for a client ...
 09:43:02  client connected: 192.168.1.23:51544  (press Ctrl+Shift+F12 to control it)
-09:43:10  -> REMOTE: keyboard/mouse now control 192.168.1.23:51544  (Ctrl+Shift+F12 to return)
-09:44:31  <- LOCAL (hotkey)
+
+Client 192.168.1.23:51544 connected. Where is it, seen from this PC?
+  [l]eft  [r]ight  [t]op  [b]ottom   (Enter = right): r
+09:43:05  client 192.168.1.23:51544 is to the RIGHT: push the cursor past this PC's right edge to switch (or Ctrl+Shift+F12)
+09:43:10  -> REMOTE (right edge): keyboard/mouse now control 192.168.1.23:51544  (Ctrl+Shift+F12 to return)
+09:44:31  <- LOCAL (edge)
 ```
 
 ### What it doesn't do (yet)
 
-- Moving to the other PC by pushing the cursor past the screen edge. Only the hotkey switches for now.
-- Clipboard or file sharing.
+- Clipboard or file sharing (clipboard is planned, with its own on/off setting).
+- Dragging something across to the other PC. Switching is blocked while a mouse button is held.
 - Typing on the client's **lock screen**, **UAC prompts** or **Ctrl+Alt+Del**. Windows blocks injected input there.
 - More than one client at a time. A new client replaces the old one.
 - Linux or macOS. It uses Win32 hooks and `SendInput`, so it's Windows ↔ Windows only.
@@ -48,14 +53,15 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 |---|---|
 | `BEHAVIOR.md` | Full behaviour reference: modes, hotkey, connections, failsafes, security, log messages. |
 | `requirements.txt` | Runtime dependencies. |
-| `kmshare.ini` | Settings: port, server address, hotkey, beep, keep-alive. |
+| `kmshare.ini` | Settings: port, server address, hotkey, edge switching, beep, keep-alive. |
 | `kmshare/__main__.py` | Asks for the role, the settings and the key, then starts the server or client. |
-| `kmshare/server.py` | Hooks, hotkey state machine, connection handling, failsafes. |
-| `kmshare/client.py` | Connect and reconnect loop, replays received events. |
+| `kmshare/server.py` | Hooks, hotkey state machine, edge detection, connection handling, failsafes. |
+| `kmshare/client.py` | Connect and reconnect loop, replays received events, detects its own edge for the way back. |
+| `kmshare/edge.py` | Edge detection, safeguards, monitor layouts, where the cursor appears after a crossing. |
 | `kmshare/channel.py` | Key derivation, handshake, encrypted message framing. |
 | `kmshare/winput.py` | Win32 cursor and `SendInput` wrappers. |
 | `kmshare/hotkey.py`, `config.py` | Hotkey parsing, ini loading. |
-| `tests/` | pytest suite (crypto, hotkey logic, end-to-end over localhost). |
+| `tests/` | pytest suite (crypto, hotkey and edge logic, launcher, end-to-end over localhost). |
 | `.dev/` | Scratch space for temporary files and the pytest cache (git-ignored). |
 | `CHANGELOG.md` | Release notes (current: 0.1.0). |
 
@@ -98,6 +104,8 @@ The handshake proves that both sides hold the key without ever sending it. Both 
      Beep when switching (y/n) [y]:
      Keep-alive ping interval, seconds [2]:
      Drop the link after silence of, seconds [6]:
+     Edge switching: push the cursor past the screen edge to switch (y/n) [y]:
+     Change the edge-switching safeguards (y/n) [n]:
    Shared key (must match on both PCs):
    ```
    **On first launch, Windows Firewall may ask about Python.** Allow it on **Private networks**. If no prompt appeared and the client can't connect, add a rule from an **admin** PowerShell:
@@ -109,7 +117,8 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    ```text
    connected to 192.168.1.10:24800. Waiting for the server's hotkey to take control
    ```
-5. On the server, press **Ctrl+Shift+F12**. The keyboard and mouse now control the client. Press it again to come back.
+5. **On the server, answer where the client sits.** As soon as the client connects, the server console asks `Where is it, seen from this PC?`. Click the server console window and type `l`, `r`, `t` or `b`, or press Enter for the ini default. It's asked once per client IP while the server runs, so a reconnect after a wifi drop doesn't ask again.
+6. **Switch:** push the cursor past the server's edge on that side, or press **Ctrl+Shift+F12**. The keyboard and mouse now control the client. To come back, push past the client's opposite edge, or press the hotkey again.
 
 Pitfalls:
 - Use PowerShell, cmd or Windows Terminal. In the default Git Bash window (mintty), the hidden key prompt doesn't work; run `winpty python -m kmshare` there instead.
@@ -117,17 +126,20 @@ Pitfalls:
 
 ## Test
 
-Untested: the two-PC steps below haven't been run on real hardware yet. The automated suite and a hook start/stop smoke test pass on one PC.
+The hotkey steps have been tested on two PCs. Untested: the edge-switching steps haven't been run on two PCs yet; the automated suite covers their logic.
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `31 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `60 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
 | Alt+Tab, scrolling, dragging a window on the client | All work on the client |
 | Hold Shift, unplug the wifi or close the client window | Within 6 s the server logs `<- LOCAL (client lost: …)` and the server's own mouse works again; no stuck Shift anywhere |
 | Press Ctrl+Shift+F12 with no client connected | Error beep and `no client connected, staying LOCAL` |
+| Answer the side question, push the cursor past that edge of the server | Cursor appears on the client's opposite edge at the same relative height; server logs `-> REMOTE (<side> edge)` |
+| Push past the client's opposite edge | Cursor comes back to the server at the matching height; server logs `<- LOCAL (edge)` |
+| Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
 
 ## Commands
 
@@ -148,8 +160,30 @@ Untested: the two-PC steps below haven't been run on real hardware yet. The auto
 | `[network] bind` | `0.0.0.0` | Server: local address to listen on. |
 | `[network] server_host` | *(empty)* | Client: server address, offered as the default when asked. If it's empty and arguments are given without `--host`, you're asked for it. |
 | `[hotkey] toggle` | `ctrl+shift+f12` | Switch key. Modifiers are `ctrl`, `shift`, `alt`, `win`. Keys are `a`–`z`, `0`–`9`, `f1`–`f24`, `space`, `tab`, `home`, `end`, … |
+| `[features] edge_switch` | `true` | Edge switching on or off. Off = hotkey only, and the server doesn't ask where the client is. |
+| `[layout] client_side` | `right` | Default answer to the server's "where is the client" question: `left`, `right`, `top`, `bottom`. |
+| `[layout] edge_push` | `8` | Pixels to push past the edge in total before switching (≥ 1). |
+| `[layout] edge_delay_ms` | `0` | Also keep pushing this long, in ms (0 = off). |
+| `[layout] edge_corner` | `40` | No switching within this many pixels of either end of an edge. |
+| `[layout] edge_rearm` | `20` | After a switch, move this many pixels away from the edge before it can switch again. |
 | `[misc] beep` | `true` | Play a system sound on each switch. |
 | `[misc] ping_interval` / `peer_timeout` | `2` / `6` | Keep-alive ping interval and silence limit, in seconds. |
+
+## Edge switching
+
+- **Only outer edges count.** With several monitors, an edge that has another monitor beyond it is ignored, so moving between your own monitors works as normal.
+- **Where the cursor appears:** at the same relative position along the edge. Leaving the server 25 % down its right edge puts the cursor 25 % down the client's left edge. With several monitors, the position is measured across the whole desktop and the cursor lands on the outermost monitor there.
+- **Safeguards** (all set in `[layout]`, and the client uses the server's values):
+
+  | Safeguard | Default | Stops |
+  |---|---|---|
+  | Push threshold `edge_push` | 8 px | Switching when you merely touch the edge, e.g. for a scrollbar at the screen's edge |
+  | Delay `edge_delay_ms` | off | Switching on a quick brush past the edge (set e.g. 150–300 ms if that happens) |
+  | Corner dead zone `edge_corner` | 40 px | Switching when aiming for corners (Start button, a window's ✕) |
+  | Re-arm distance `edge_rearm` | 20 px | Bouncing straight back after a crossing |
+  | Mouse button held | always | Switching mid-drag |
+
+- **The hotkey always works**, edge switching or not.
 
 ## Security notes & limitations
 

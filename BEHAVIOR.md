@@ -1,6 +1,6 @@
 # kmshare behaviour reference
 
-This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.1.0**. For setup, see [README.md](README.md).
+This file is the complete description of what kmshare does, in normal use and when something goes wrong. It covers version **0.1.0** plus the *Unreleased* changes in [CHANGELOG.md](CHANGELOG.md). For setup, see [README.md](README.md).
 
 Terms used below:
 
@@ -16,13 +16,14 @@ Terms used below:
 3. [Configuration](#3-configuration)
 4. [Hotkey](#4-hotkey)
 5. [Server: LOCAL and REMOTE modes](#5-server-local-and-remote-modes)
-6. [Server: connections](#6-server-connections)
-7. [Client](#7-client)
-8. [Failure and safety behaviour (all cases)](#8-failure-and-safety-behaviour-all-cases)
-9. [Security](#9-security)
-10. [Messages on the wire](#10-messages-on-the-wire)
-11. [Log messages](#11-log-messages)
-12. [Known gaps](#12-known-gaps)
+6. [Edge switching](#6-edge-switching)
+7. [Server: connections](#7-server-connections)
+8. [Client](#8-client)
+9. [Failure and safety behaviour (all cases)](#9-failure-and-safety-behaviour-all-cases)
+10. [Security](#10-security)
+11. [Messages on the wire](#11-messages-on-the-wire)
+12. [Log messages](#12-log-messages)
+13. [Known gaps](#13-known-gaps)
 
 ---
 
@@ -38,7 +39,8 @@ kmshare is built so that **any failure gives control back to the server's own ke
 | A hook error means LOCAL | If code inside a hook throws an error, it's logged and that event **passes through to the server**. Nothing is blocked by accident. |
 | No stuck keys on the client | The client tracks every key and button it has pressed and releases them all when control returns, when the link drops, or when it quits. |
 | No stuck keys on the server | A key pressed on the server before switching gets its key-up on the server, even if you release it after switching to REMOTE. |
-| No accidental switching | Holding the hotkey doesn't keep flipping modes: auto-repeat and the key-up of the trigger key are swallowed. |
+| No accidental switching | Holding the hotkey doesn't keep flipping modes: auto-repeat and the key-up of the trigger key are swallowed. Edge switching needs a real push past an outer edge, ignores corners, never fires mid-drag, and can't bounce straight back ([Edge switching](#6-edge-switching)). |
+| Edge switching can't strand you | The hotkey works whatever the edge state. A `leave` from the client is only acted on while the server is REMOTE for that same connection. |
 | Nothing works without the key | No input is sent or replayed until both sides have proven they hold the same key. |
 
 ---
@@ -64,6 +66,12 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
    | server | `Beep when switching (y/n) [y]` | `y`/`yes`/`true`/`1`/`on` or `n`/`no`/`false`/`0`/`off` |
    | server | `Keep-alive ping interval, seconds [2]` | more than 0 |
    | server | `Drop the link after silence of, seconds [6]` | more than the ping interval you just entered. The default is the ini value, raised to twice the ping interval if it's smaller. |
+   | server | `Edge switching: push the cursor past the screen edge to switch (y/n) [y]` | y/n (default from `[features] edge_switch`). `n` = hotkey only; the next questions are skipped. |
+   | server | `Change the edge-switching safeguards (y/n) [n]` | y/n. `n` keeps the four values from `[layout]`. |
+   | server | `Push past the edge before switching, pixels [8]` | 1 or more (only if you answered `y` above) |
+   | server | `Keep pushing at least, ms (0 = off) [0]` | 0 or more |
+   | server | `No switching this close to a corner, pixels [40]` | 0 or more |
+   | server | `After a switch, move this far from the edge first, pixels [20]` | 0 or more |
    | client | `Server address (IP or host name) [<server_host>]` | required; if the ini value is empty, there's no default |
    | client | `Port [24800]` | 1–65535; must match the server |
    | client | `Drop the link after silence of, seconds [6]` | more than the ini's `ping_interval` |
@@ -95,6 +103,12 @@ Note: kmshare can't tell whether the two keys match until the client connects. A
 | `[network] bind` | `0.0.0.0` | Server only. If empty, the default is used. |
 | `[network] server_host` | empty | Client only. If empty, you're asked at launch. `--host` overrides it. |
 | `[hotkey] toggle` | `ctrl+shift+f12` | See [Hotkey](#4-hotkey). An invalid value is a config error. |
+| `[features] edge_switch` | `true` | Server only. Edge switching on/off. Off: no side question, hotkey only. |
+| `[layout] client_side` | `right` | Server only. Default answer to the side question. One of `left`, `right`, `top`, `bottom` (any case); anything else is a config error. |
+| `[layout] edge_push` | `8` | Server only (sent to the client). Must be ≥ 1. |
+| `[layout] edge_delay_ms` | `0` | Server only (sent to the client). ≥ 0; 0 = no delay. |
+| `[layout] edge_corner` | `40` | Server only (sent to the client). ≥ 0. |
+| `[layout] edge_rearm` | `20` | Server only (sent to the client). ≥ 0. |
 | `[misc] beep` | `true` | Plays a system sound when the mode changes. |
 | `[misc] ping_interval` | `2` | Seconds between keep-alive pings. Must be > 0. |
 | `[misc] peer_timeout` | `6` | Seconds of silence before the link counts as dead. Must be > `ping_interval`. |
@@ -128,12 +142,14 @@ The server starts in **LOCAL** and installs low-level keyboard and mouse hooks, 
 - Every key and mouse event goes to the server's apps as normal. Nothing is sent to the client.
 - kmshare remembers which keys were pressed while LOCAL. This is how their key-ups are kept on the server later.
 
-### Switching LOCAL → REMOTE (hotkey)
+### Switching LOCAL → REMOTE (hotkey or edge)
 
 | If | Then |
 |---|---|
 | **No client connected** | Stays LOCAL. Logs `no client connected, staying LOCAL` and plays the error sound. |
-| A client is connected | 1. Saves the current cursor position.<br>2. Moves the cursor to the **centre of the primary monitor** and keeps it there.<br>3. Sends `enter` to the client.<br>4. Logs `-> REMOTE: keyboard/mouse now control <ip:port>  (<hotkey> to return)`.<br>5. Plays the "OK" sound. |
+| A client is connected | 1. Saves the current cursor position.<br>2. Moves the cursor to the **centre of the primary monitor** and keeps it there.<br>3. Sends `enter` to the client. After an **edge** crossing it includes the client's entry edge and the crossing position, so the client can place its cursor; after the **hotkey** the client's cursor stays where it is.<br>4. Logs `-> REMOTE (hotkey)` or `-> REMOTE (<side> edge)`, then `: keyboard/mouse now control <ip:port>  (<hotkey> to return)`.<br>5. Plays the "OK" sound. |
+
+The hotkey works at any time. An edge push only switches when a client is connected **and** its side has been answered ([Edge switching](#6-edge-switching)).
 
 ### In REMOTE
 
@@ -141,7 +157,7 @@ The server starts in **LOCAL** and installs low-level keyboard and mouse hooks, 
 - Every physical key-down and key-up is **blocked on the server** and sent to the client with its virtual-key code, scan code and extended-key flag (so arrow keys, right Ctrl and right Alt stay distinct).
 - Exception 1: the key-up of a key that went down **before** switching to REMOTE goes to the server, not the client. Example: you're still holding Shift from the hotkey.
 - Exception 2: the hotkey trigger key (see [Hotkey](#4-hotkey)).
-- Windows-reserved combinations still act on the server (see [Known gaps](#12-known-gaps)).
+- Windows-reserved combinations still act on the server (see [Known gaps](#13-known-gaps)).
 
 **Mouse:**
 - All physical mouse events are **blocked on the server**, including types kmshare doesn't forward. The server's cursor stays parked.
@@ -152,37 +168,80 @@ The server starts in **LOCAL** and installs low-level keyboard and mouse hooks, 
 
 ### Switching REMOTE → LOCAL
 
-This happens for any of these reasons: **hotkey**, **client lost**, **client replaced**, **server stopping**.
+This happens for any of these reasons: **hotkey**, **edge** (the client reported a push past its edge), **client lost**, **client replaced**, **server stopping**.
 
 1. Sends `rel` to the client (if the link still works), which releases everything the client is holding.
-2. Puts the server's cursor back where it was before switching to REMOTE.
-3. Logs `<- LOCAL (<reason>)`. Reasons:
+2. Puts the server's cursor back where it was before switching to REMOTE. **After an edge return** it instead puts the cursor on the server's edge at the matching position (see [Edge switching](#6-edge-switching)).
+3. **Turns the server's edge off until the cursor moves away from it** (re-arm), so it can't bounce straight back to the client.
+4. Logs `<- LOCAL (<reason>)`. Reasons:
    - `hotkey`
+   - `edge`
    - `client lost: <detail>`
    - `client replaced`
    - `server stopping`
-4. Plays the "asterisk" sound.
+5. Plays the "asterisk" sound.
 
 ---
 
-## 6. Server: connections
+## 6. Edge switching
+
+Push the cursor past the edge of one PC's screen to move it onto the other PC. It's on unless `[features] edge_switch = false`, or you answered `n` at launch. The hotkey works either way.
+
+### Which side the client is on
+
+- When a client connects (after the handshake), the **server console** asks:
+  ```text
+  Client 192.168.0.235:51544 connected. Where is it, seen from this PC?
+    [l]eft  [r]ight  [t]op  [b]ottom   (Enter = right):
+  ```
+  `l`/`left`, `r`/`right`, `t`/`top` or `b`/`bottom`, any case. Enter takes `[layout] client_side`. Anything else prints `Please answer l, r, t or b.` and asks again.
+- **The answer is remembered per client IP until the server stops**, so a reconnect after a wifi drop doesn't ask again. To change it, restart the server.
+- If the server console isn't interactive (input redirected), the default is used without asking.
+- **Until it's answered, only the hotkey switches.** The connection works normally meanwhile: pings, hotkey and everything else.
+- Once answered, the server logs `client <ip:port> is to the <SIDE>: push the cursor past this PC's <side> edge to switch (or <hotkey>)`. It then sends the client its exit edge (the opposite one) and the safeguard values. The client logs `the server is on my <SIDE>: push past my <side> edge to go back`.
+
+### When a push counts
+
+The rules are the same on both PCs: the server checks its own edge while LOCAL, and the client checks its own edge while the server is controlling it.
+
+1. **Only the chosen edge counts**: the server's `side` edge, and the client's opposite edge.
+2. **Only outer edges count.** The edge must be the outside of the whole desktop at that point. If another monitor lies beyond it, it's ignored, so moving between your own monitors is unaffected. Each PC re-reads its monitor layout at most every 2 s, so plugging a monitor in or out is picked up.
+3. **Push threshold:** the movement past the edge is added up, using where the cursor *would* have gone. The switch needs at least `edge_push` pixels in total (default 8). A fast flick that overshoots by more than that switches at once.
+4. **Delay** (`edge_delay_ms`, default 0 = off): the push must also have lasted at least this long, counted from the first push event. You have to keep pushing; just resting at the edge doesn't count.
+5. **Corner dead zone:** no switching within `edge_corner` pixels (default 40) of either end of that monitor's edge.
+6. **Mouse button held:** no switching while any button is held. On the server that's a physical button; on the client, a button kmshare pressed. Drags stay on their PC.
+7. Moving back inside, landing in a corner, or holding a button **resets** the push count and delay timer.
+8. **Re-arm:** after any switch (edge or hotkey), the edge turns off until the cursor has been at least `edge_rearm` pixels (default 20) from it. This stops it bouncing straight back, and stops a cursor left resting at the edge from switching again by itself.
+
+### Where the cursor appears
+
+- The crossing position is sent as a fraction along the edge (0 = top or left end, 1 = bottom or right end) of the monitor where it was crossed.
+- The receiving PC maps that fraction across its **whole desktop** along the entry edge, and puts the cursor on the **outermost monitor** at that point. If the point falls in a gap between monitors of different sizes, the cursor goes to the nearest monitor.
+- Example: leave the server 25 % down its right edge, and the cursor appears 25 % down the client's left edge.
+- **Client entry** (server → client): the server parks its own cursor as usual, and the client moves its cursor to the entry point.
+- **Return** (client → server): the client sends `leave` once and waits. The server switches to LOCAL, puts its cursor at the matching point on its `side` edge, and disarms that edge (re-arm). A `leave` that arrives after the hotkey already switched back, or that belongs to an older connection, is ignored.
+
+---
+
+## 7. Server: connections
 
 | Situation | Behaviour |
 |---|---|
 | Startup | Listens on `bind:port` and logs `server listening on <bind>:<port>, waiting for a client ...` |
-| Incoming connection | Runs the handshake ([Security](#9-security)). **One handshake at a time.** Each one has a 5 s limit. |
+| Incoming connection | Runs the handshake ([Security](#10-security)). **One handshake at a time.** Each one has a 5 s limit. |
 | Handshake fails (`wrong key`, `not a kmshare client (or a different version)`, `handshake timed out`, `client hung up during handshake`, or a network error) | Logs `rejected <ip:port>: <reason>`, closes the connection, then **waits 1 s before taking the next handshake**. This limits key guessing to about one try per second. |
-| Handshake succeeds | Logs `client connected: <ip:port>  (press <hotkey> to control it)`. Stays in its current mode (LOCAL). |
+| Handshake succeeds | Logs `client connected: <ip:port>  (press <hotkey> to control it)`. Stays in its current mode (LOCAL). If edge switching is on, asks which side the client is on (or reuses the answer for that IP) and sends it the layout ([Edge switching](#6-edge-switching)). |
 | A second client connects (correct key) while one is connected | The new client wins. If REMOTE, the server first switches to LOCAL (`client replaced`). The old connection is closed and logged as `client <old> disconnected (replaced by <new>)`. |
 | Keep-alive | Sends `ping` every `ping_interval` seconds. Each `pong` resets the timer. |
 | No `pong` for `peer_timeout` seconds | Drops the client: `no response from client`. Switches to LOCAL if needed. |
 | Client closes, network error, a send fails, or a message fails its check | Drops the client with that reason. Switches to LOCAL if needed. Logs `client <ip:port> disconnected (<reason>)`. |
 | Events still queued from a previous connection | Discarded. They're never delivered to a newer client. |
+| Client disconnects | Its side answer is kept for that IP. Edge switching stays off until a client is connected again. |
 | Ctrl+C in the server console (while LOCAL) | Switches to LOCAL if needed, closes the client, removes the hooks, closes the listening port, prints `Stopped.` |
 
 ---
 
-## 7. Client
+## 8. Client
 
 ### Connecting
 
@@ -192,7 +251,7 @@ This happens for any of these reasons: **hotkey**, **client lost**, **client rep
 | Server can't be reached (TCP connect has a 5 s limit) | Logs `cannot reach server …, retrying ...` **once per distinct error** (no repeated spam) and retries every **3 s**, forever. |
 | Handshake fails (wrong key, wrong program, timeout) | Logs `handshake failed: <reason>` (e.g. `server rejected the key`) and retries every **5 s**, forever. With the wrong key it keeps getting rejected until you restart it with the right key. |
 | Connected | Logs `connected to <host>:<port>. Waiting for the server's hotkey to take control` |
-| Disconnected for any reason | **Releases every held key and button**, logs `disconnected: <reason>`, waits 2 s, logs `reconnecting ...`, and goes back to connecting. |
+| Disconnected for any reason | **Releases every held key and button**, forgets the layout (a new one comes after reconnecting), logs `disconnected: <reason>`, waits 2 s, logs `reconnecting ...`, and goes back to connecting. |
 | No message from the server for `peer_timeout` seconds | Disconnects with `server not responding` (then as above). The server's pings keep this from happening on a healthy link. |
 | Ctrl+C in the client console | Releases every held key and button, closes the connection, prints `Stopped.` |
 
@@ -204,8 +263,9 @@ This happens for any of these reasons: **hotkey**, **client lost**, **client rep
 | Key | Sends the key with the same virtual-key code, scan code and extended-key flag. Remembers it while it's held down. |
 | Button | Sends the press or release. Remembers held buttons. |
 | Wheel | Sends a vertical or horizontal wheel event with the exact amount received. |
-| `enter` | Logs `server took control`. |
-| `rel` | Releases every held key and button. Logs `server released control`. |
+| `enter` | Marks this PC as controlled. With an entry edge: moves the cursor to the entry point and logs `server took control (came in over my <edge> edge)`. Without one (hotkey): leaves the cursor where it is and logs `server took control`. Either way it disarms its own edge until the cursor moves `edge_rearm` pixels away. |
+| `layout` | Stores its exit edge and the safeguard values, and logs `the server is on my <SIDE>: …`. From then on, while controlled, every received move is checked against that edge ([Edge switching](#6-edge-switching)). On a push: sends `leave` once and logs `pushed past the <side> edge, handing control back`. |
+| `rel` | Marks this PC as not controlled, releases every held key and button. Logs `server released control`. |
 | `ping` | Replies `pong`. |
 | Malformed message (missing or wrong field) | Logs `ignored malformed message …` and continues. |
 | Unknown message type | Ignored without a log line (leaves room for later versions). |
@@ -215,7 +275,7 @@ This happens for any of these reasons: **hotkey**, **client lost**, **client rep
 
 ---
 
-## 8. Failure and safety behaviour (all cases)
+## 9. Failure and safety behaviour (all cases)
 
 | Event | Server | Client |
 |---|---|---|
@@ -233,10 +293,15 @@ This happens for any of these reasons: **hotkey**, **client lost**, **client rep
 | A guessing or wrong-key connection | Rejected; next handshake only after 1 s | – |
 | Hotkey with no client connected | Stays LOCAL, error sound | – |
 | Hotkey held down | Switches once (auto-repeat swallowed) | – |
+| Cursor pushed into a screen corner, or along the edge with a button held | No switch | No switch back |
+| You press the hotkey just as the client sends `leave` | Hotkey wins; the late `leave` is ignored | Released by `rel` as usual |
+| Client disconnects while the side question is open | The answer is still remembered for that IP; edge switching stays off until it reconnects | Reconnects; no question the second time |
+| Wifi drops while the cursor is on the client after an edge crossing | → LOCAL within `peer_timeout`, cursor back where it crossed | Releases everything |
+| Monitor plugged in/out or resolution changed | New layout used within 2 s | New layout used within 2 s |
 
 ---
 
-## 9. Security
+## 10. Security
 
 **What's protected:** everything sent between the two PCs (every key, so passwords too) is encrypted and authenticated. Input from anyone who doesn't have the key is never accepted.
 
@@ -270,7 +335,7 @@ session_key     = HMAC-SHA256(master, "session"|sn|cn)
 
 ---
 
-## 10. Messages on the wire
+## 11. Messages on the wire
 
 Each message is compact JSON, inside the encryption.
 
@@ -280,14 +345,17 @@ Each message is compact JSON, inside the encryption.
 | S → C | `{"t":"k","v":vk,"s":scan,"e":ext,"d":down}` | Key down or up |
 | S → C | `{"t":"b","b":"left\|right\|middle\|x1\|x2","d":down}` | Mouse button |
 | S → C | `{"t":"w","d":delta,"h":horizontal}` | Wheel; one notch = 120 |
-| S → C | `{"t":"enter"}` | Server switched to REMOTE |
+| S → C | `{"t":"enter"}` | Server switched to REMOTE (hotkey) |
+| S → C | `{"t":"enter","edge":"left","f":0.42}` | Server switched to REMOTE over an edge: the client's entry edge and the position along it (0–1) |
+| S → C | `{"t":"layout","side":"left","push":8,"delay":0,"corner":40,"rearm":20}` | The client's exit edge and the edge-switching safeguards |
 | S → C | `{"t":"rel"}` | Release everything (server switched to LOCAL) |
 | S → C | `{"t":"ping"}` | Keep-alive |
 | C → S | `{"t":"pong"}` | Keep-alive reply |
+| C → S | `{"t":"leave","f":0.42}` | The client was pushed past its exit edge at this position; hand control back |
 
 ---
 
-## 11. Log messages
+## 12. Log messages
 
 Timestamps are `HH:MM:SS`. `-v` adds debug output.
 
@@ -295,8 +363,10 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 |---|---|---|
 | S | `server listening on <bind>:<port>, waiting for a client ...` | Started |
 | S | `client connected: <ip:port>  (press <hotkey> to control it)` | Client passed the handshake |
-| S | `rejected <ip:port>: <reason>` | Handshake failed (see [Connections](#6-server-connections)) |
-| S | `-> REMOTE: keyboard/mouse now control <ip:port>  (<hotkey> to return)` | Switched to REMOTE |
+| S | `rejected <ip:port>: <reason>` | Handshake failed (see [Connections](#7-server-connections)) |
+| S | `Client <ip:port> connected. Where is it, seen from this PC?` | Side question (see [Edge switching](#6-edge-switching)) |
+| S | `client <ip:port> is to the <SIDE>: push the cursor past this PC's <side> edge to switch (or <hotkey>)` | Edge switching active for this client |
+| S | `-> REMOTE (hotkey)…` / `-> REMOTE (<side> edge)…` | Switched to REMOTE |
 | S | `<- LOCAL (<reason>)` | Switched to LOCAL |
 | S | `no client connected, staying LOCAL` | Hotkey pressed with no client |
 | S | `client <ip:port> disconnected (<reason>)` | Client gone |
@@ -306,13 +376,15 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 | C | `handshake failed: server rejected the key` | Keys differ |
 | C | `handshake failed: server failed the key check (different key?)` | The server couldn't prove it has the key (fake server, or a bug) |
 | C | `connected to <host>:<port>. Waiting for the server's hotkey to take control` | Ready |
-| C | `server took control` / `server released control` | Mode changes on the server |
+| C | `server took control` / `server took control (came in over my <edge> edge)` / `server released control` | Mode changes on the server |
+| C | `the server is on my <SIDE>: push past my <side> edge to go back` | Layout received |
+| C | `pushed past the <side> edge, handing control back` | Sent `leave` |
 | C | `disconnected: <reason>` then `reconnecting ...` | Link lost; everything held was released |
 | C | `ignored malformed message …` | Bad message (skipped) |
 
 ---
 
-## 12. Known gaps
+## 13. Known gaps
 
 - **Secure desktop:** lock screen, UAC prompts and Ctrl+Alt+Del can't be controlled on the client, and the server's hooks can't see them.
 - **Shortcuts Windows reserves on the server:** Ctrl+Alt+Del always acts on the server. Win+L locks the server; the hook can't stop it (untested).
@@ -321,5 +393,7 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
   - On the client, kmshare can't send input into admin windows.
 - **Keyboard layout:** keys are sent as virtual-key codes, so both PCs should use the same layout.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
-- **Not implemented yet:** switching at the screen edge, clipboard sync, more than one client at a time, operating systems other than Windows.
+- **Not implemented yet:** clipboard sync, dragging things across PCs, more than one client at a time, operating systems other than Windows.
+- **The side answer can't be changed while the server runs.** Restart the server to answer again.
+- **While REMOTE, the server's cursor sits parked at the centre of its primary monitor** (visible, but it doesn't move).
 - **Ctrl+C while REMOTE** goes to the client, not to kmshare. Switch back to LOCAL first to quit the server.
