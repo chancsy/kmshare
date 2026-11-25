@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Running `python -m kmshare` with no arguments asks for the role and then each setting that role uses, one at a time. Enter keeps the default from `kmshare.ini`, invalid answers are asked again, and answers are not saved. With any argument, the settings come from the ini and the arguments as before.
+
 ## 0.1.0 (2026-11-25)
 
 First MVP.

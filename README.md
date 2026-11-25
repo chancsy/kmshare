@@ -4,7 +4,7 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
 
 ## What it does
 
-- You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays:
+- You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays, then asks for each setting one at a time. Enter keeps the default shown in brackets, which comes from `kmshare.ini`. The roles:
   - **server**: the PC whose keyboard and mouse you're using.
   - **client**: the PC that gets controlled.
 - **Ctrl+Shift+F12** on the server hands control to the client. Pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor is parked and ignores input.
@@ -49,7 +49,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `BEHAVIOR.md` | Full behaviour reference: modes, hotkey, connections, failsafes, security, log messages. |
 | `requirements.txt` | Runtime dependencies. |
 | `kmshare.ini` | Settings: port, server address, hotkey, beep, keep-alive. |
-| `kmshare/__main__.py` | Asks for the role and key, then starts the server or client. |
+| `kmshare/__main__.py` | Asks for the role, the settings and the key, then starts the server or client. |
 | `kmshare/server.py` | Hooks, hotkey state machine, connection handling, failsafes. |
 | `kmshare/client.py` | Connect and reconnect loop, replays received events. |
 | `kmshare/channel.py` | Key derivation, handshake, encrypted message framing. |
@@ -82,19 +82,30 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    python -m pip install -r requirements.txt
    ```
    Every `python` command below assumes this venv is active and the current folder is `<repo>`. kmshare isn't installed as a package, so `python -m kmshare` only works from `<repo>`.
-2. **Edit `kmshare.ini`.** On the client, set `server_host` to the server PC's IP address or host name. To find the IP, run `ipconfig` on the server and look for the "IPv4 Address" line. You can also leave it empty and type the address at launch. `port` must be the same on both PCs.
+2. **Optional: edit `kmshare.ini`.** Every setting is asked at launch anyway; the ini only sets the defaults shown in brackets, so you can just press Enter. On the client it's worth setting `server_host` to the server PC's IP address or host name, which you find by running `ipconfig` on the server and reading the "IPv4 Address" line. `port` must be the same on both PCs.
 3. **Start the server** (on the PC with the keyboard and mouse you want to use):
    ```powershell
    cd <repo>
    python -m kmshare
    ```
-   Answer `s`, then type a key. Use the same key on both PCs and make it at least 8 characters; a short phrase works well.
+   Answer `s`, press Enter at each setting to keep its default, then type a key. Use the same key on both PCs and make it at least 8 characters; a short phrase works well.
+   ```text
+   Role [s/c]: s
+   Settings (press Enter to keep the value in [brackets], from the ini):
+     Port [24800]:
+     Listen address (0.0.0.0 = all adapters) [0.0.0.0]:
+     Switch hotkey [Ctrl+Shift+F12]:
+     Beep when switching (y/n) [y]:
+     Keep-alive ping interval, seconds [2]:
+     Drop the link after silence of, seconds [6]:
+   Shared key (must match on both PCs):
+   ```
    **On first launch, Windows Firewall may ask about Python.** Allow it on **Private networks**. If no prompt appeared and the client can't connect, add a rule from an **admin** PowerShell:
    ```powershell
    New-NetFirewallRule -DisplayName "kmshare" -Direction Inbound -Protocol TCP -LocalPort 24800 -Action Allow -Profile Private
    ```
    Also make sure the wifi network is set to **Private** in Windows: Settings → Network & internet → Wi-Fi → (your network) → Network profile type.
-4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, and type the same key. You should see:
+4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, type the server's address (or press Enter if `server_host` is set in the ini), keep the other defaults, and type the same key. You should see:
    ```text
    connected to 192.168.1.10:24800. Waiting for the server's hotkey to take control
    ```
@@ -110,7 +121,7 @@ Untested: the two-PC steps below haven't been run on real hardware yet. The auto
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `26 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `31 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -122,8 +133,8 @@ Untested: the two-PC steps below haven't been run on real hardware yet. The auto
 
 | Command | What it does |
 |---|---|
-| `python -m kmshare` | Asks for the role, then the key, then runs. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
-| `python -m kmshare --role server` | Skips the role prompt. |
+| `python -m kmshare` | **Interactive:** asks for the role, then each setting (Enter keeps the ini default), then the key, then runs. Answers aren't saved. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
+| `python -m kmshare --role server` | **Any argument skips the settings questions** and uses the ini as it is; only the key is asked. |
 | `python -m kmshare --role client --host 192.168.1.10` | Client using this server address, overriding the ini. |
 | `python -m kmshare --config D:\other.ini` | Uses a different ini file. |
 | `python -m kmshare -v` | Debug logging. |
@@ -135,7 +146,7 @@ Untested: the two-PC steps below haven't been run on real hardware yet. The auto
 |---|---|---|
 | `[network] port` | `24800` | TCP port. Must match on both PCs. |
 | `[network] bind` | `0.0.0.0` | Server: local address to listen on. |
-| `[network] server_host` | *(empty)* | Client: server address. If empty, you're asked at launch. |
+| `[network] server_host` | *(empty)* | Client: server address, offered as the default when asked. If it's empty and arguments are given without `--host`, you're asked for it. |
 | `[hotkey] toggle` | `ctrl+shift+f12` | Switch key. Modifiers are `ctrl`, `shift`, `alt`, `win`. Keys are `a`–`z`, `0`–`9`, `f1`–`f24`, `space`, `tab`, `home`, `end`, … |
 | `[misc] beep` | `true` | Play a system sound on each switch. |
 | `[misc] ping_interval` / `peer_timeout` | `2` / `6` | Keep-alive ping interval and silence limit, in seconds. |

@@ -52,7 +52,23 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 3. **The config** is loaded. If it's missing or invalid, kmshare prints `Config error: …` and exits with code **2**.
 4. A banner shows the version and config path: `kmshare 0.1.0: keyboard/mouse sharing  (config: …)`.
 5. **Role:** taken from `--role`, otherwise you're asked `Role [s/c]:` (`s`, `server`, `c` or `client`, any case). The question repeats until the answer is valid.
-6. **Server address (client only):** taken from `--host`, then `server_host` in the ini, and if both are empty you're asked `Server address (IP or host name):` until you type something.
+6. **Settings.** What happens depends on whether any argument was given.
+
+   **No arguments (interactive):** you're asked for each setting the chosen role uses, one at a time. The value in `[brackets]` comes from the ini, and **Enter keeps it**. An invalid answer prints `Invalid: <reason>` and the same question is asked again. Answers apply to **this run only** and are not saved to the ini.
+
+   | Role | Question | Accepts |
+   |---|---|---|
+   | server | `Port [24800]` | 1–65535 |
+   | server | `Listen address (0.0.0.0 = all adapters) [0.0.0.0]` | any address |
+   | server | `Switch hotkey [Ctrl+Shift+F12]` | see [Hotkey](#4-hotkey) |
+   | server | `Beep when switching (y/n) [y]` | `y`/`yes`/`true`/`1`/`on` or `n`/`no`/`false`/`0`/`off` |
+   | server | `Keep-alive ping interval, seconds [2]` | more than 0 |
+   | server | `Drop the link after silence of, seconds [6]` | more than the ping interval you just entered. The default is the ini value, raised to twice the ping interval if it's smaller. |
+   | client | `Server address (IP or host name) [<server_host>]` | required; if the ini value is empty, there's no default |
+   | client | `Port [24800]` | 1–65535; must match the server |
+   | client | `Drop the link after silence of, seconds [6]` | more than the ini's `ping_interval` |
+
+   **Any argument given** (for example just `--role server`): no settings questions. Settings come from the ini and the arguments. The only extra question is the server address, for a client when neither `--host` nor `server_host` is set: `Server address (IP or host name):`, repeated until you type something.
 7. **Key:** `Shared key (must match on both PCs):`. Typing is hidden.
    - An empty key prints `A key is required.` and exits with code **2**.
    - A key shorter than 8 characters prints a warning but is accepted.
@@ -71,7 +87,7 @@ Note: kmshare can't tell whether the two keys match until the client connects. A
 
 ## 3. Configuration
 
-`kmshare.ini` is read once at launch; restart kmshare to apply changes. A missing section or key uses the default. Comments start with `;` or `#`, including at the end of a line.
+`kmshare.ini` is read once at launch; restart kmshare to apply changes. With no arguments, its values become the defaults offered at the settings questions ([Launch](#2-launch)); the answers are not written back. A missing section or key uses the default. Comments start with `;` or `#`, including at the end of a line.
 
 | Key | Default | Rules |
 |---|---|---|
