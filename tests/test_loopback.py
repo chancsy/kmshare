@@ -49,14 +49,14 @@ def test_edge_crossing_round_trip(running_server, master, fake_injector, no_curs
         assert wait_for(lambda: (0, 540) in no_cursor["sets"])  # client placed at its left edge
 
         no_cursor["pos"] = (30, 540)                       # client cursor moved inside -> re-arms
-        srv.on_mouse(WM_MOUSEMOVE, 961, 540, 0)
+        srv.on_mouse(WM_MOUSEMOVE, 1920, 540, 0)           # +1 from the frozen spot (1919, 540)
         assert wait_for(lambda: ("move", 1, 0) in fake_injector.events)
         assert client._edge.armed
 
-        no_cursor["pos"] = (0, 540)                        # client cursor at its left edge
-        srv.on_mouse(WM_MOUSEMOVE, 950, 540, 0)            # push 10 px past it
+        no_cursor["pos"] = (0, 270)                        # client cursor at its left edge, 25 % down
+        srv.on_mouse(WM_MOUSEMOVE, 1909, 540, 0)           # -10: push 10 px past the client's edge
         assert wait_for(lambda: not srv.remote)            # client sent "leave"
-        assert no_cursor["sets"][-1] == (1919, 540)        # server cursor back at its right edge
+        assert no_cursor["sets"][-1] == (1919, 270)        # server cursor at its right edge, 25 % down
         assert wait_for(lambda: ("release_all",) in fake_injector.events)
     finally:
         stop.set()
@@ -108,7 +108,7 @@ def test_events_flow_end_to_end(running_server, master, fake_injector):
         assert srv.remote
         srv.on_key(A, 30, False, True)
         srv.on_key(A, 30, False, False)
-        srv.on_mouse(WM_MOUSEMOVE, 970, 545, 0)
+        srv.on_mouse(WM_MOUSEMOVE, 110, 105, 0)  # frozen at (100, 100): moves (10, 5)
         srv.on_mouse(0x0201, 960, 540, 0)
         srv.on_mouse(0x0202, 960, 540, 0)
         for vk in (LCTRL, LSHIFT, F12):  # back to LOCAL

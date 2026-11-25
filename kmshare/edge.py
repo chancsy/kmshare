@@ -53,6 +53,13 @@ def _clamp(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
 
 
+def desktop_span(side: str, monitors: Sequence[Rect]) -> tuple[int, int]:
+    """The whole desktop's extent along an edge: (first, last+1) pixel on the edge's axis."""
+    if side in ("left", "right"):
+        return min(m[1] for m in monitors), max(m[3] for m in monitors)
+    return min(m[0] for m in monitors), max(m[2] for m in monitors)
+
+
 def _edge_geometry(side: str, mon: Rect, tx: int, ty: int):
     """For a move targeting (tx, ty) from a cursor on ``mon``, return
     (overshoot past the edge, distance inside from the edge, position along the edge,
@@ -122,21 +129,25 @@ class EdgeDetector:
         self._push += over
         if self._push >= self.s.push_px and (now - self._since) * 1000 >= self.s.delay_ms:
             self.disarm()
-            return along / max(length - 1, 1)
+            # Fraction across the WHOLE desktop (not this monitor), the same scale entry_point()
+            # uses, so pushing straight back returns to the same spot on any monitor layout.
+            lo, hi = desktop_span(self.side, monitors)
+            pos = along + (mon[1] if self.side in ("left", "right") else mon[0])
+            return (pos - lo) / max(hi - lo - 1, 1)
         return None
 
 
 def entry_point(side: str, fraction: float, monitors: Sequence[Rect]) -> tuple[int, int]:
     """Where the cursor should appear on THIS PC's ``side`` edge for a crossing at ``fraction``.
 
-    The fraction is mapped across the whole desktop's extent along that edge, then
+    The fraction is mapped across the whole desktop's extent along that edge (the inverse of
+    the fraction ``EdgeDetector.update`` reports), then
     placed on the outermost monitor at that height/width (nearest monitor if it
     falls in a gap between monitors of different sizes).
     """
     fraction = min(max(fraction, 0.0), 1.0)
     vertical = side in ("left", "right")
-    lo = min(m[1] if vertical else m[0] for m in monitors)
-    hi = max(m[3] if vertical else m[2] for m in monitors)
+    lo, hi = desktop_span(side, monitors)
     pos = lo + round(fraction * (hi - lo - 1))
 
     def span(m):

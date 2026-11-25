@@ -8,7 +8,7 @@ Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or w
   - **server**: the PC whose keyboard and mouse you're using.
   - **client**: the PC that gets controlled.
 - **Push the cursor past the screen edge** to move it onto the other PC, and push it back past the opposite edge on the other PC to return. When a client connects, the server asks where it sits (left, right, top or bottom). Safeguards stop accidental switching; see [Edge switching](#edge-switching). It can be turned off.
-- **Ctrl+Shift+F12** on the server always works too: it hands control to the client, and pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor is parked and ignores input.
+- **Ctrl+Shift+F12** on the server always works too: it hands control to the client, and pressing it again gives control back. Typing, mouse movement, clicks (left, right, middle, back and forward), and vertical and horizontal scrolling all go to the client. While control is with the client, the server's own cursor stays frozen where it was and ignores input.
 - **Protected by a shared key** that you type at every launch and that is never saved. A PC with the wrong key is rejected, and everything on the network is encrypted.
 - **Failsafes:** if the wifi drops or either side quits, the server goes back to local control within a few seconds, and the client releases any keys or buttons that were held down. Nothing stays stuck.
 - Every behaviour, including each failure case, is described in [BEHAVIOR.md](BEHAVIOR.md).
@@ -41,7 +41,7 @@ Client 192.168.1.23:51544 connected. Where is it, seen from this PC?
  SERVER PC                                                CLIENT PC
  low-level hooks (pynput)                                 SendInput / SetCursorPos
  hotkey -> REMOTE: suppress local input,                  replays keys, clicks, wheel,
- park cursor, send relative moves      == TCP 24800 ==>   moves cursor by dx/dy
+ freeze cursor, send relative moves    == TCP 24800 ==>   moves cursor by dx/dy
                                        AES-256-GCM        replies to keep-alive pings
 ```
 

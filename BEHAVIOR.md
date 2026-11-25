@@ -40,6 +40,7 @@ kmshare is built so that **any failure gives control back to the server's own ke
 | No stuck keys on the client | The client tracks every key and button it has pressed and releases them all when control returns, when the link drops, or when it quits. |
 | No stuck keys on the server | A key pressed on the server before switching gets its key-up on the server, even if you release it after switching to REMOTE. |
 | No accidental switching | Holding the hotkey doesn't keep flipping modes: auto-repeat and the key-up of the trigger key are swallowed. Edge switching needs a real push past an outer edge, ignores corners, never fires mid-drag, and can't bounce straight back ([Edge switching](#6-edge-switching)). |
+| No cursor yank on return | When control comes back and kmshare places the cursor, mouse movements Windows had already computed from the frozen spot are dropped, so they can't pull the cursor back there ([Switching REMOTE → LOCAL](#switching-remote--local)). |
 | Edge switching can't strand you | The hotkey works whatever the edge state. A `leave` from the client is only acted on while the server is REMOTE for that same connection. |
 | Nothing works without the key | No input is sent or replayed until both sides have proven they hold the same key. |
 
@@ -147,7 +148,7 @@ The server starts in **LOCAL** and installs low-level keyboard and mouse hooks, 
 | If | Then |
 |---|---|
 | **No client connected** | Stays LOCAL. Logs `no client connected, staying LOCAL` and plays the error sound. |
-| A client is connected | 1. Saves the current cursor position.<br>2. Moves the cursor to the **centre of the primary monitor** and keeps it there.<br>3. Sends `enter` to the client. After an **edge** crossing it includes the client's entry edge and the crossing position, so the client can place its cursor; after the **hotkey** the client's cursor stays where it is.<br>4. Logs `-> REMOTE (hotkey)` or `-> REMOTE (<side> edge)`, then `: keyboard/mouse now control <ip:port>  (<hotkey> to return)`.<br>5. Plays the "OK" sound. |
+| A client is connected | 1. Remembers the cursor position as the **frozen spot**.<br>2. The cursor **stays frozen there**, wherever it is (at the edge after an edge crossing). It doesn't move until control returns.<br>3. Sends `enter` to the client. After an **edge** crossing it includes the client's entry edge and the crossing position, so the client can place its cursor; after the **hotkey** the client's cursor stays where it is.<br>4. Logs `-> REMOTE (hotkey)` or `-> REMOTE (<side> edge)`, then `: keyboard/mouse now control <ip:port>  (<hotkey> to return)`.<br>5. Plays the "OK" sound. |
 
 The hotkey works at any time. An edge push only switches when a client is connected **and** its side has been answered ([Edge switching](#6-edge-switching)).
 
@@ -160,8 +161,8 @@ The hotkey works at any time. An edge push only switches when a client is connec
 - Windows-reserved combinations still act on the server (see [Known gaps](#13-known-gaps)).
 
 **Mouse:**
-- All physical mouse events are **blocked on the server**, including types kmshare doesn't forward. The server's cursor stays parked.
-- **Movement** is sent as relative motion: how far the cursor *would* have moved from the parked point. Windows pointer speed and acceleration are applied **once**, on the server, so the feel matches the server's mouse settings.
+- All physical mouse events are **blocked on the server**, including types kmshare doesn't forward. The server's cursor stays frozen.
+- **Movement** is sent as relative motion: how far the cursor *would* have moved from the frozen spot. Windows reports this even when the spot is at a screen edge, so movement towards the edge is measured too. Windows pointer speed and acceleration are applied **once**, on the server, so the feel matches the server's mouse settings.
 - Moves that queue up between sends are added together into one message. No motion is lost; there are just fewer packets.
 - **Buttons:** left, right, middle, X1 (back), X2 (forward). Presses and releases are sent separately, so dragging works.
 - **Wheel:** vertical and horizontal, with the raw amount, so high-resolution and smooth-scrolling devices keep their precision.
@@ -171,7 +172,8 @@ The hotkey works at any time. An edge push only switches when a client is connec
 This happens for any of these reasons: **hotkey**, **edge** (the client reported a push past its edge), **client lost**, **client replaced**, **server stopping**.
 
 1. Sends `rel` to the client (if the link still works), which releases everything the client is holding.
-2. Puts the server's cursor back where it was before switching to REMOTE. **After an edge return** it instead puts the cursor on the server's edge at the matching position (see [Edge switching](#6-edge-switching)).
+2. After the **hotkey**, a lost client, or the server stopping, the cursor is simply still at the frozen spot. **After an edge return** it's moved to the server's edge at the matching position (see [Edge switching](#6-edge-switching)).
+   - **Race guard:** Windows computes a movement's target before kmshare's hook sees it. So a movement computed from the frozen spot can still be in the hook when the cursor is placed, and letting it through would yank the cursor back to the frozen spot. For up to 0.25 s after the cursor was moved, kmshare therefore drops any move whose target is nearer the frozen spot than the cursor's real position. The first normal move ends the guard. When the cursor isn't moved (hotkey return), there's nothing to guard.
 3. **Turns the server's edge off until the cursor moves away from it** (re-arm), so it can't bounce straight back to the client.
 4. Logs `<- LOCAL (<reason>)`. Reasons:
    - `hotkey`
@@ -215,11 +217,11 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 ### Where the cursor appears
 
-- The crossing position is sent as a fraction along the edge (0 = top or left end, 1 = bottom or right end) of the monitor where it was crossed.
+- The crossing position is sent as a fraction (0 = top or left end, 1 = bottom or right end) of the **whole desktop's** extent along that edge, the same scale the receiving PC uses to place the cursor. Pushing straight back therefore returns to the same spot, whatever the monitor sizes on either PC.
 - The receiving PC maps that fraction across its **whole desktop** along the entry edge, and puts the cursor on the **outermost monitor** at that point. If the point falls in a gap between monitors of different sizes, the cursor goes to the nearest monitor.
 - Example: leave the server 25 % down its right edge, and the cursor appears 25 % down the client's left edge.
-- **Client entry** (server → client): the server parks its own cursor as usual, and the client moves its cursor to the entry point.
-- **Return** (client → server): the client sends `leave` once and waits. The server switches to LOCAL, puts its cursor at the matching point on its `side` edge, and disarms that edge (re-arm). A `leave` that arrives after the hotkey already switched back, or that belongs to an older connection, is ignored.
+- **Client entry** (server → client): the server's cursor stays frozen at the edge where it crossed, and the client moves its cursor to the entry point.
+- **Return** (client → server): the client sends `leave` once and waits. The server switches to LOCAL, puts its cursor at the matching point on its `side` edge (with the race guard above), and disarms that edge (re-arm). A `leave` that arrives after the hotkey already switched back, or that belongs to an older connection, is ignored.
 
 ---
 
@@ -279,13 +281,13 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 | Event | Server | Client |
 |---|---|---|
-| You press the hotkey while REMOTE | → LOCAL, cursor restored | Releases everything held |
+| You press the hotkey while REMOTE | → LOCAL; the cursor is still where it was frozen | Releases everything held |
 | Wifi drops or the cable is pulled | → LOCAL within `peer_timeout` (6 s) | Releases everything held within `peer_timeout`, then reconnects every 3 s |
 | Client app closed with Ctrl+C | → LOCAL as soon as the connection closes | Releases everything before quitting |
 | Client window closed with **X** or the process is killed | → LOCAL as soon as the connection closes, or at worst after `peer_timeout` | Process ends. Windows ends injected key presses when the process dies, but this hasn't been verified for every app (untested). |
 | Client PC sleeps or freezes | → LOCAL after `peer_timeout` | After waking: detects silence, releases everything, reconnects |
 | Server app closed with Ctrl+C | Already LOCAL (Ctrl+C only reaches the server while LOCAL) | Connection closes → releases everything, reconnects |
-| Server window closed with **X** or the process is killed while REMOTE | Hooks disappear with the process → **local input returns immediately**. The cursor stays where it was parked. | Connection closes, or goes silent until `peer_timeout` → releases everything, reconnects |
+| Server window closed with **X** or the process is killed while REMOTE | Hooks disappear with the process → **local input returns immediately**. The cursor is where it was frozen. | Connection closes, or goes silent until `peer_timeout` → releases everything, reconnects |
 | Server PC sleeps, locks or freezes | Hooks don't see secure-desktop input. Mode is kept. | Silence → releases everything after `peer_timeout` |
 | A message fails its check (tampering, replay, reordering, wrong key mid-session, frame > 64 KB) | Drops the client → LOCAL | Disconnects → releases everything, reconnects |
 | A hook throws an error | Logs `keyboard hook error` / `mouse hook error`. **That event goes to the server.** The hooks keep running. | – |
@@ -297,6 +299,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 | You press the hotkey just as the client sends `leave` | Hotkey wins; the late `leave` is ignored | Released by `rel` as usual |
 | Client disconnects while the side question is open | The answer is still remembered for that IP; edge switching stays off until it reconnects | Reconnects; no question the second time |
 | Wifi drops while the cursor is on the client after an edge crossing | → LOCAL within `peer_timeout`, cursor back where it crossed | Releases everything |
+| You're still moving the mouse at the moment control returns over the edge | Moves computed from the frozen spot are dropped (race guard); the cursor stays at the return point | – |
 | Monitor plugged in/out or resolution changed | New layout used within 2 s | New layout used within 2 s |
 
 ---
@@ -346,12 +349,12 @@ Each message is compact JSON, inside the encryption.
 | S → C | `{"t":"b","b":"left\|right\|middle\|x1\|x2","d":down}` | Mouse button |
 | S → C | `{"t":"w","d":delta,"h":horizontal}` | Wheel; one notch = 120 |
 | S → C | `{"t":"enter"}` | Server switched to REMOTE (hotkey) |
-| S → C | `{"t":"enter","edge":"left","f":0.42}` | Server switched to REMOTE over an edge: the client's entry edge and the position along it (0–1) |
+| S → C | `{"t":"enter","edge":"left","f":0.42}` | Server switched to REMOTE over an edge: the client's entry edge and the position along it (0–1, across the whole desktop) |
 | S → C | `{"t":"layout","side":"left","push":8,"delay":0,"corner":40,"rearm":20}` | The client's exit edge and the edge-switching safeguards |
 | S → C | `{"t":"rel"}` | Release everything (server switched to LOCAL) |
 | S → C | `{"t":"ping"}` | Keep-alive |
 | C → S | `{"t":"pong"}` | Keep-alive reply |
-| C → S | `{"t":"leave","f":0.42}` | The client was pushed past its exit edge at this position; hand control back |
+| C → S | `{"t":"leave","f":0.42}` | The client was pushed past its exit edge at this position (0–1, across the client's whole desktop); hand control back |
 
 ---
 
@@ -395,5 +398,5 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
 - **Not implemented yet:** clipboard sync, dragging things across PCs, more than one client at a time, operating systems other than Windows.
 - **The side answer can't be changed while the server runs.** Restart the server to answer again.
-- **While REMOTE, the server's cursor sits parked at the centre of its primary monitor** (visible, but it doesn't move).
+- **While REMOTE, the server's cursor stays visible** where it was frozen (it isn't hidden).
 - **Ctrl+C while REMOTE** goes to the client, not to kmshare. Switch back to LOCAL first to quit the server.

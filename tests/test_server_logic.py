@@ -38,7 +38,8 @@ def test_local_mode_passes_everything(srv):
 
 def test_hotkey_enters_remote_and_keeps_modifier_ups_local(srv, no_cursor):
     assert press_hotkey(srv) == [False, False, True]  # modifiers pass, trigger is eaten
-    assert srv.remote and no_cursor["sets"] == [(960, 540)]
+    assert srv.remote and no_cursor["sets"] == []  # cursor frozen in place, not moved
+    assert srv._anchor == (100, 100)
     # Ctrl/Shift went down locally, so their key-ups must also go local (no stuck keys);
     # the F12 key-up is swallowed.
     assert release_hotkey(srv) == [True, False, False]
@@ -49,7 +50,7 @@ def test_remote_forwards_and_suppresses(srv):
     press_hotkey(srv), release_hotkey(srv), sent(srv)
     assert srv.on_key(A, 30, False, True) is True
     assert srv.on_key(A, 30, False, False) is True
-    assert srv.on_mouse(WM_MOUSEMOVE, 965, 538, 0) is True
+    assert srv.on_mouse(WM_MOUSEMOVE, 105, 98, 0) is True  # frozen at (100, 100)
     assert srv.on_mouse(WM_MOUSEWHEEL, 960, 540, (-120 & 0xFFFF) << 16) is True
     assert srv.on_mouse(0x0201, 960, 540, 0) is True
     assert sent(srv) == [
@@ -67,7 +68,7 @@ def test_hotkey_returns_to_local_and_releases_remote(srv, no_cursor):
     # In REMOTE, the hotkey's modifiers are forwarded; the trigger switches back.
     assert press_hotkey(srv) == [True, True, True]
     assert not srv.remote
-    assert no_cursor["sets"][-1] == (10, 20)  # cursor restored
+    assert no_cursor["sets"] == []  # cursor was frozen at (10, 20) the whole time: nothing to restore
     msgs = sent(srv)
     assert msgs[-1] == {"t": "rel"}  # client releases the forwarded Ctrl/Shift
     assert release_hotkey(srv) == [True, False, False]
@@ -147,6 +148,42 @@ def test_client_leave_returns_local_at_matching_edge_and_disarms(edge_srv, no_cu
     assert sent(edge_srv) == [{"t": "rel"}]
     no_cursor["pos"] = (1919, 270)
     assert edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 270, 0) is False   # disarmed: no bounce back
+
+
+def test_edge_crossing_freezes_cursor_at_the_edge(edge_srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0)
+    assert edge_srv.remote and edge_srv._anchor == (1919, 540) and no_cursor["sets"] == []
+    sent(edge_srv)
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1925, 543, 0) is True    # past the edge: still measured
+    assert sent(edge_srv) == [{"t": "m", "x": 6, "y": 3}]
+
+
+def test_race_guard_drops_moves_computed_from_frozen_spot(edge_srv, no_cursor):
+    """Bug A: a move Windows computed from the frozen spot must not yank the cursor back."""
+    no_cursor["pos"] = (1919, 540)
+    edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0)                   # cross at y=540, frozen there
+    edge_srv._on_client_leave(edge_srv._gen, {"t": "leave", "f": 0.25})
+    assert no_cursor["sets"][-1] == (1919, 270)                     # placed at the return point
+    no_cursor["pos"] = (1919, 270)
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1916, 541, 0) is True    # stale (frozen spot + motion): dropped
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1915, 268, 0) is False   # normal move: passes, guard ends
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1914, 541, 0) is False   # guard is over
+
+
+def test_race_guard_expires(edge_srv, no_cursor):
+    no_cursor["pos"] = (1919, 540)
+    edge_srv.on_mouse(WM_MOUSEMOVE, 1950, 540, 0)
+    edge_srv._on_client_leave(edge_srv._gen, {"t": "leave", "f": 0.25})
+    no_cursor["pos"] = (1919, 270)
+    edge_srv._stale_until = 0.0                                      # pretend 0.25 s passed
+    assert edge_srv.on_mouse(WM_MOUSEMOVE, 1916, 541, 0) is False
+
+
+def test_hotkey_return_without_moving_needs_no_guard(srv, no_cursor):
+    press_hotkey(srv), release_hotkey(srv)
+    press_hotkey(srv)                                                # back to LOCAL
+    assert not srv.remote and no_cursor["sets"] == [] and srv._stale_anchor is None
 
 
 def test_stale_leave_ignored(edge_srv):

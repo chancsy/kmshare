@@ -130,6 +130,31 @@ def test_entry_point_gap_snaps_to_nearest():
     assert monitor_at(x, y, gap) is not None and y == 0
 
 
+CLIENT = [(0, 0, 1920, 1080)]
+
+
+@pytest.mark.parametrize("side,cur,delta", [
+    ("left", (0, 720), (-20, 0)),        # main screen's left edge
+    ("left", (2560, 1700), (-20, 0)),    # portrait's left edge below the main screen
+    ("top", (1280, 0), (0, -20)),        # main screen's top
+    ("top", (3000, 0), (0, -20)),        # portrait's top
+    ("bottom", (500, 1439), (0, 20)),    # main screen's bottom
+    ("bottom", (3000, 1919), (0, 20)),   # portrait's bottom
+    ("right", (3639, 960), (20, 0)),
+])
+def test_round_trip_returns_to_same_spot(side, cur, delta):
+    """Bug B: leave the server, arrive on the client, push straight back -> same point."""
+    from kmshare.edge import OPPOSITE
+
+    f = EdgeDetector(side, EdgeSettings(push_px=1, corner_px=0)).update(
+        cur, (cur[0] + delta[0], cur[1] + delta[1]), TWO)
+    on_client = entry_point(OPPOSITE[side], f, CLIENT)
+    g = EdgeDetector(OPPOSITE[side], EdgeSettings(push_px=1, corner_px=0)).update(
+        on_client, (on_client[0] - delta[0], on_client[1] - delta[1]), CLIENT)
+    back = entry_point(side, g, TWO)
+    assert abs(back[0] - cur[0]) <= 2 and abs(back[1] - cur[1]) <= 2, (cur, on_client, back)
+
+
 def test_monitor_cache_refreshes():
     calls = []
     cache = MonitorCache(lambda: calls.append(1) or ONE, ttl=0)

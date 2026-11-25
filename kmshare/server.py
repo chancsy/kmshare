@@ -1,9 +1,15 @@
 """Server role: capture this PC's keyboard/mouse and forward it to the connected client.
 
-Press the hotkey to switch between LOCAL (input stays here) and REMOTE (input is
-suppressed here and sent to the client). While REMOTE the cursor is parked at the
-centre of the primary screen; each low-level mouse event reports where the
-cursor *would* have moved, so ``pt - anchor`` is the relative motion to send.
+Press the hotkey (or push past the screen edge) to switch between LOCAL (input stays
+here) and REMOTE (input is suppressed here and sent to the client). While REMOTE the
+cursor stays frozen where it was; each low-level mouse event reports where the cursor
+*would* have moved (even past the screen edge), so ``pt - anchor`` is the relative
+motion to send.
+
+Windows computes that target before our hook sees the event, so a move computed from
+the frozen spot can still be in the hook when we switch back to LOCAL and place the
+cursor elsewhere. Letting it through would yank the cursor back, so for a moment after
+returning such stale moves are dropped (see ``_stale_anchor``).
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ CLICKS = {
 }
 LLKHF_EXTENDED, LLKHF_LOWER_IL_INJECTED, LLKHF_INJECTED = 0x01, 0x02, 0x10
 LLMHF_INJECTED, LLMHF_LOWER_IL_INJECTED = 0x01, 0x02
+STALE_WINDOW_S = 0.25  # how long after returning to LOCAL moves can still be computed from the frozen spot
 
 
 def console_choose_side(peer: str, default: str) -> str:
@@ -67,6 +74,8 @@ class Server:
         self._edge: EdgeDetector | None = None
         self._mons = MonitorCache(lambda: winput.monitors())
         self._buttons_down: set[str] = set()  # physical mouse buttons held (blocks edge switching)
+        self._stale_anchor: tuple[int, int] | None = None  # frozen spot we just left (race guard)
+        self._stale_until = 0.0
         self.port = cfg.port
         self._master = master_key
         self._lock = threading.RLock()
@@ -260,9 +269,10 @@ class Server:
             log.warning("no client connected, staying LOCAL")
             self._beep(winsound.MB_ICONHAND)
             return
-        self._saved_pos = winput.cursor_pos()
-        self._anchor = winput.primary_center()
-        winput.set_cursor_pos(*self._anchor)
+        # Freeze the cursor where it is: suppressed moves don't move it, and their targets
+        # relative to this spot give the motion to send.
+        self._saved_pos = self._anchor = winput.cursor_pos()
+        self._stale_anchor = None
         self.remote = True
         if edge_fraction is not None and self.side is not None:
             self._send({"t": "enter", "edge": OPPOSITE[self.side], "f": round(edge_fraction, 4)})
@@ -279,8 +289,11 @@ class Server:
         self.remote = False
         self._send({"t": "rel"})
         target = place or self._saved_pos
-        if target is not None:
+        if target is not None and target != self._anchor:
             winput.set_cursor_pos(*target)
+            # Moves Windows already computed from the frozen spot may still be in the hook.
+            self._stale_anchor = self._anchor
+            self._stale_until = time.monotonic() + STALE_WINDOW_S
         if self._edge is not None:
             self._edge.disarm()  # no bounce: move away from the edge before it can switch again
         log.info("<- LOCAL (%s)", reason)
@@ -332,6 +345,8 @@ class Server:
                 (self._buttons_down.add if msg == WM_XBUTTONDOWN else self._buttons_down.discard)(name)
 
             if not self.remote:
+                if msg == WM_MOUSEMOVE and self._is_stale_move(x, y):
+                    return True  # computed from the frozen spot: would yank the cursor back
                 if msg == WM_MOUSEMOVE and self._edge is not None and self._chan is not None:
                     fraction = self._edge.update(winput.cursor_pos(), (x, y), self._mons.get(),
                                                  buttons_held=bool(self._buttons_down))
@@ -353,6 +368,25 @@ class Server:
                 delta = ctypes.c_short((mouse_data >> 16) & 0xFFFF).value
                 self._send({"t": "w", "d": delta, "h": msg == WM_MOUSEHWHEEL})
             return True
+
+    def _is_stale_move(self, x: int, y: int) -> bool:
+        """Right after returning to LOCAL: is this move's target computed from the frozen spot?
+
+        A move's target is (where the cursor was) + (motion). If it's nearer the spot we just
+        left than the cursor's real position, it was computed before we moved the cursor.
+        The guard ends at the first normal move or after ``STALE_WINDOW_S``.
+        """
+        stale = self._stale_anchor
+        if stale is None:
+            return False
+        if time.monotonic() > self._stale_until:
+            self._stale_anchor = None
+            return False
+        cx, cy = winput.cursor_pos()
+        if (x - stale[0]) ** 2 + (y - stale[1]) ** 2 < (x - cx) ** 2 + (y - cy) ** 2:
+            return True
+        self._stale_anchor = None
+        return False
 
     # pynput filters run on the hook threads: keep them fast and never let them raise
     # anything but the suppress signal, or pynput tears the hook down.
