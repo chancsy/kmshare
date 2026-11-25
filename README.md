@@ -132,7 +132,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `71 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `73 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -142,6 +142,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 | Answer the side question, push the cursor past that edge of the server | Cursor appears on the client's opposite edge at the same relative height; server logs `-> REMOTE (<side> edge)` |
 | Push past the client's opposite edge | Cursor comes back to the server at the matching height; server logs `<- LOCAL (edge)` |
 | Slide along the edge into a corner, drag with a button held, push only lightly | No switch (corner dead zone, button block, push threshold) |
+| Untested: control the client for 10+ min **only moving the mouse** (no typing or clicking) | Teams on the client stays Available; screen saver/lock don't start |
 
 ## Commands
 

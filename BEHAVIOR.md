@@ -261,7 +261,7 @@ The rules are the same on both PCs: the server checks its own edge while LOCAL, 
 
 | Message | Action on the client |
 |---|---|
-| Mouse move | Reads the current cursor position and moves it by the received amount using `SetCursorPos`. Windows keeps the cursor on the screen. Using `SetCursorPos` places the cursor exactly, with no second layer of acceleration, and apps still see normal mouse-move events (hover and drag work). |
+| Mouse move | Reads the current cursor position and moves it by the received amount using `SetCursorPos`. Windows keeps the cursor on the screen. Using `SetCursorPos` places the cursor exactly, with no second layer of acceleration, and apps still see normal mouse-move events (hover and drag work). `SetCursorPos` doesn't count as user input, though, so at most once a second a move also sends a zero-distance `SendInput` move. That resets the Windows idle timer (Teams presence, screen saver, lock) without moving the cursor. Keys, buttons and wheel already use `SendInput` and count as input. |
 | Key | Sends the key with the same virtual-key code, scan code and extended-key flag. Remembers it while it's held down. |
 | Button | Sends the press or release. Remembers held buttons. |
 | Wheel | Sends a vertical or horizontal wheel event with the exact amount received. |
@@ -398,5 +398,6 @@ Timestamps are `HH:MM:SS`. `-v` adds debug output.
 - **Precision-touchpad gestures** (two-finger scroll, three-finger swipes) may still act on the server (untested).
 - **Not implemented yet:** clipboard sync, dragging things across PCs, more than one client at a time, operating systems other than Windows.
 - **The side answer can't be changed while the server runs.** Restart the server to answer again.
+- **The server may go idle while REMOTE** (untested): its own input is blocked before Windows handles it, so Teams presence, the screen saver or the lock may start on the server during long sessions on the client.
 - **While REMOTE, the server's cursor stays visible** where it was frozen (it isn't hidden).
 - **Ctrl+C while REMOTE** goes to the client, not to kmshare. Switch back to LOCAL first to quit the server.

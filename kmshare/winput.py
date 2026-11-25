@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -10,7 +11,8 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 ULONG_PTR = ctypes.c_size_t
 INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
 KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x0001, 0x0002
-MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL = 0x0800, 0x1000
+MOUSEEVENTF_MOVE, MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL = 0x0001, 0x0800, 0x1000
+ACTIVITY_EVERY_S = 1.0  # how often cursor moves also report user activity to Windows
 KMSHARE_TAG = 0x4B4D5348  # "KMSH" in dwExtraInfo, marks our injected events
 
 # name -> (down flag, up flag, mouseData)
@@ -118,15 +120,24 @@ def _key(vk: int, scan: int, flags: int) -> bool:
 class Injector:
     """Replays received events on this PC and remembers what is held down."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock=time.monotonic) -> None:
         self._keys: dict[int, tuple[int, bool]] = {}
         self._buttons: set[str] = set()
+        self._clock = clock
+        self._last_activity: float | None = None
 
     def move(self, dx: int, dy: int) -> None:
         # SetCursorPos lands on exact pixels (no double pointer acceleration) and
         # still generates WM_MOUSEMOVE, so hover/drag work.
         x, y = cursor_pos()
         set_cursor_pos(x + dx, y + dy)
+        # SetCursorPos doesn't count as user input, so the idle timer (Teams "Away",
+        # screen saver, lock) keeps running. A zero-distance SendInput move does count
+        # and doesn't change where the cursor is; at most one per ACTIVITY_EVERY_S.
+        now = self._clock()
+        if self._last_activity is None or now - self._last_activity >= ACTIVITY_EVERY_S:
+            _mouse(MOUSEEVENTF_MOVE)
+            self._last_activity = now
 
     def button(self, name: str, down: bool) -> None:
         down_flag, up_flag, data = BUTTONS[name]

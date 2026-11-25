@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed:** the client PC went idle (Teams showed Away, the screen saver or lock could start) while you only moved the mouse on it. kmshare places the cursor with `SetCursorPos`, which Windows doesn't count as user input. Cursor moves now also send a zero-distance input event, at most once a second, which resets the idle timer without moving the cursor.
+
 ## 0.2.0 (2026-11-25)
 
 - **Edge switching:** push the cursor past the server's screen edge to move onto the client, and past the client's opposite edge to come back. When a client connects, the server asks which side it sits on (left, right, top or bottom), once per client IP. The cursor appears at the same relative position along the edge.
