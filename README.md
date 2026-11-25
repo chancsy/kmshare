@@ -2,6 +2,8 @@
 
 Use one Windows PC's keyboard and mouse on a second Windows PC over the LAN or wifi. Both PCs must know the same key, and all traffic is encrypted.
 
+**Supported OS: Windows 10 and 11 only, on both PCs.** Linux and macOS aren't supported: capturing and sending input uses Windows-only APIs (low-level hooks, `SendInput`).
+
 ## What it does
 
 - You run the same command, `python -m kmshare`, on both PCs. It asks which **role** this PC plays, then asks for each setting one at a time. Enter keeps the default shown in brackets, which comes from `kmshare.ini`. The roles:
@@ -126,11 +128,11 @@ Pitfalls:
 
 ## Test
 
-The hotkey steps have been tested on two PCs. Untested: the edge-switching steps haven't been run on two PCs yet; the automated suite covers their logic.
+All steps below have been tested on two PCs (server with two monitors of different sizes).
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `60 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `71 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
