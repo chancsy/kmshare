@@ -1,4 +1,8 @@
-"""Load ``kmshare.ini``. The shared key is never stored here; it is typed at launch."""
+"""Load ``kmshare.ini`` plus this PC's ``kmshare.local.ini``. The shared key is never stored; it is typed at launch.
+
+``kmshare.local.ini`` sits next to ``kmshare.ini``, is ignored by git, and its values win. kmshare writes it
+only when you agree to save a typed server address; you can put any other setting there by hand too.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,28 @@ from .edge import SIDES, EdgeSettings
 from .hotkey import Hotkey, parse_hotkey
 
 DEFAULT_INI = Path(__file__).resolve().parent.parent / "kmshare.ini"
+LOCAL_HEADER = ("; This PC's own kmshare settings: they override kmshare.ini and are ignored by git.\n"
+                "; kmshare writes server_host here when you save a typed address; other keys can be added by hand.\n\n")
+
+
+def local_ini(path: Path) -> Path:
+    """``kmshare.ini`` -> ``kmshare.local.ini`` in the same folder."""
+    path = Path(path)
+    return path.with_name(f"{path.stem}.local{path.suffix}")
+
+
+def save_local(path: Path, section: str, key: str, value: str) -> Path:
+    """Set one value in the local ini next to ``path``, keeping what else is there. Returns its path."""
+    local = local_ini(path)
+    cp = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
+    cp.read(local, encoding="utf-8")
+    if not cp.has_section(section):
+        cp.add_section(section)
+    cp.set(section, key, value)
+    with open(local, "w", encoding="utf-8") as f:
+        f.write(LOCAL_HEADER)
+        cp.write(f)
+    return local
 
 
 @dataclass(frozen=True)
@@ -42,7 +68,7 @@ def load_config(path: Path = DEFAULT_INI) -> Config:
     if not path.is_file():
         raise FileNotFoundError(f"config file not found: {path}")
     cp = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
-    cp.read(path, encoding="utf-8")
+    cp.read([path, local_ini(path)], encoding="utf-8")  # a missing local file is skipped
     d = Config()
 
     port = cp.getint("network", "port", fallback=d.port)

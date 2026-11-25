@@ -1,6 +1,6 @@
 import pytest
 
-from kmshare.config import DEFAULT_INI, load_config
+from kmshare.config import DEFAULT_INI, load_config, local_ini, save_local
 from kmshare.hotkey import parse_hotkey
 
 
@@ -67,3 +67,16 @@ def test_ini_bad_port(tmp_path):
     p.write_text("[network]\nport = 70000\n")
     with pytest.raises(ValueError):
         load_config(p)
+
+
+def test_local_ini_overrides_and_save_keeps_other_keys(tmp_path):
+    p = tmp_path / "kmshare.ini"
+    p.write_text("[network]\nport = 5000\nserver_host =\n")
+    assert local_ini(p) == tmp_path / "kmshare.local.ini"
+    assert load_config(p).server_host == ""                       # no local file: fine
+    local_ini(p).write_text("[misc]\nbeep = false\n")
+    save_local(p, "network", "server_host", "pc1")
+    save_local(p, "network", "server_host", "pc2")               # updated, not duplicated
+    cfg = load_config(p)
+    assert (cfg.server_host, cfg.beep, cfg.port) == ("pc2", False, 5000)
+    assert p.read_text() == "[network]\nport = 5000\nserver_host =\n"  # kmshare.ini never written

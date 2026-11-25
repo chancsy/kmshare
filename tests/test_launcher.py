@@ -106,9 +106,36 @@ def test_quick_start_server_asks_nothing_but_the_key(run, capsys):
 
 
 def test_quick_start_client_asks_only_the_server_address(run, capsys):
-    code, cap, prompts = run(["c", "y", "192.168.0.9"], [])
+    code, cap, prompts = run(["c", "y", "192.168.0.9", "n"], [])
     assert code == 0 and cap["host"] == "192.168.0.9" and cap["cfg"].port == 24800
     assert prompts == ["Role [s/c]: ",
                        "Use the settings in k.ini and only ask for the server address and key (y/n) [y]: ",
-                       "  Server address (IP or host name) [10.0.0.5]: "]
+                       "  Server address (IP or host name) [10.0.0.5]: ",
+                       "  Save 192.168.0.9 as the server address for next time (y/n) [y]: "]
     assert "  Using: port 24800, clipboard sharing on" in capsys.readouterr().out
+
+
+def test_typed_address_saved_to_local_ini_and_offered_next_time(run, tmp_path, capsys):
+    code, cap, prompts = run(["c", "", "192.168.0.9", ""], [])
+    local = tmp_path / "k.local.ini"
+    assert code == 0 and "server_host = 192.168.0.9" in local.read_text(encoding="utf-8")
+    assert "Saved to k.local.ini" in capsys.readouterr().out
+    assert "server_host = 10.0.0.5\n" in (tmp_path / "k.ini").read_text()  # the main ini is untouched
+    prompts.clear()
+    code, cap, prompts = run(["c", "", ""], [])                              # Enter keeps the saved one
+    assert cap["host"] == "192.168.0.9" and "  Server address (IP or host name) [192.168.0.9]: " in prompts
+    assert not any(p.startswith("  Save ") for p in prompts)                # unchanged: no save question
+    assert "+ k.local.ini" in capsys.readouterr().out                       # banner names the local file
+
+
+def test_typed_address_not_saved_when_declined(run, tmp_path):
+    run(["c", "", "192.168.0.9", "n"], [])
+    assert not (tmp_path / "k.local.ini").exists()
+
+
+def test_empty_key_asks_again(run, monkeypatch, capsys):
+    keys = iter(["", "", "a long enough key"])
+    monkeypatch.setattr(launcher.getpass, "getpass", lambda prompt="": next(keys))
+    code, cap, prompts = run(["s", ""], [])
+    assert code == 0 and cap["role"] == "server"
+    assert capsys.readouterr().out.count("A key is required.") == 2

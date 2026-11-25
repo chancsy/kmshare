@@ -3,6 +3,8 @@
 ## Unreleased
 
 - **Quick start:** after the role, `Use the settings in kmshare.ini and only ask for the key (y/n) [y]`. Enter uses the ini's settings as they are, so the server only asks for the key and the client for the server address and key; a `Using: …` line shows the main settings. Answer `n` to be asked each setting as before.
+- **Saved server address:** when the client is given an address that differs from the saved one, it asks `Save <address> as the server address for next time (y/n) [y]` and writes it to `kmshare.local.ini`, which git ignores. That file is read after `kmshare.ini` and its values win, so other overrides can go there too.
+- **Empty key:** pressing Enter at `Shared key` asks again instead of quitting.
 
 ## 0.3.0 (2026-11-25)
 

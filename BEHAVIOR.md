@@ -55,13 +55,13 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 1. **Arguments** are read: `--role`, `--config`, `--host`, `-v` (debug logging).
 2. **DPI awareness** is switched on (per-monitor v2, with older fallbacks), so every coordinate is in physical pixels and works with Windows display scaling.
 3. **The config** is loaded. If it's missing or invalid, kmshare prints `Config error: …` and exits with code **2**.
-4. A banner shows the version and config path: `kmshare 0.3.0: keyboard/mouse sharing  (config: …)`.
+4. A banner shows the version and config path: `kmshare 0.3.0: keyboard/mouse sharing  (config: …)`. If `kmshare.local.ini` exists it's named too: `(config: …\kmshare.ini + kmshare.local.ini)`.
 5. **Role:** taken from `--role`, otherwise you're asked `Role [s/c]:` (`s`, `server`, `c` or `client`, any case). The question repeats until the answer is valid.
 6. **Settings.** What happens depends on whether any argument was given.
 
    **No arguments (interactive):** first `Use the settings in kmshare.ini and only ask for the key (y/n) [y]` (the client's says `… the server address and key …`).
 
-   - **`y` or Enter (quick start):** the ini's settings are used as they are. A client is still asked `Server address (IP or host name) [<server_host>]` (Enter keeps the ini value; required if it's empty). Then one line shows the main settings in use, for example `  Using: port 24800, hotkey Ctrl+Shift+F12, edge switching on, clipboard sharing on` (the client's shows port and clipboard only).
+   - **`y` or Enter (quick start):** the ini's settings are used as they are. A client is still asked `Server address (IP or host name) [<server_host>]` (Enter keeps the ini value; required if it's empty), then the save question below if the address is new. Then one line shows the main settings in use, for example `  Using: port 24800, hotkey Ctrl+Shift+F12, edge switching on, clipboard sharing on` (the client's shows port and clipboard only).
    - **`n`:** you're asked for each setting the chosen role uses, one at a time. The value in `[brackets]` comes from the ini, and **Enter keeps it**. An invalid answer prints `Invalid: <reason>` and the same question is asked again. Answers apply to **this run only** and are not saved to the ini.
 
    | Role | Question | Accepts |
@@ -80,13 +80,14 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
    | server | `After a switch, move this far from the edge first, pixels [20]` | 0 or more |
    | server | `Share copied text with the other PC when control switches (y/n) [y]` | y/n (default from `[features] clipboard`). Asked even if edge switching is off. |
    | client | `Server address (IP or host name) [<server_host>]` | required; if the ini value is empty, there's no default |
+   | client | `Save <address> as the server address for next time (y/n) [y]` | Only if the address differs from `server_host`; also asked in the quick start. `y` writes `[network] server_host` to `kmshare.local.ini` and prints `Saved to kmshare.local.ini (this PC only, not tracked by git).` A write error prints `Couldn't save it: …` and the launch goes on. |
    | client | `Port [24800]` | 1–65535; must match the server |
    | client | `Drop the link after silence of, seconds [6]` | more than the ini's `ping_interval` |
    | client | `Share copied text with the other PC when control switches (y/n) [y]` | y/n (default from `[features] clipboard`) |
 
    **Any argument given** (for example just `--role server`): no settings questions. Settings come from the ini and the arguments. The only extra question is the server address, for a client when neither `--host` nor `server_host` is set: `Server address (IP or host name):`, repeated until you type something.
 7. **Key:** `Shared key (must match on both PCs):`. Typing is hidden.
-   - An empty key prints `A key is required.` and exits with code **2**.
+   - An empty key (Enter pressed by accident) prints `A key is required.` and the question is asked again, until a key is typed or Ctrl+C.
    - A key shorter than 8 characters prints a warning but is accepted.
    - The key is turned into a 256-bit master key with scrypt (about 0.1 s, deliberately slow). The typed text is then discarded and never written anywhere.
 8. **Run** the chosen role until it's stopped.
@@ -95,7 +96,7 @@ Both roles start with the same command, `python -m kmshare`, run from the projec
 |---|---|---|
 | Ctrl+C | `Stopped.` | 0 |
 | Network error at startup (e.g. port already in use) | `Network error: …` | 1 |
-| Config error, or empty key | `Config error: …` / `A key is required.` | 2 |
+| Config error | `Config error: …` | 2 |
 
 Note: kmshare can't tell whether the two keys match until the client connects. A typo shows up as a rejected handshake, not at the prompt.
 
@@ -104,6 +105,8 @@ Note: kmshare can't tell whether the two keys match until the client connects. A
 ## 3. Configuration
 
 `kmshare.ini` is read once at launch; restart kmshare to apply changes. With no arguments, its values are used as they are after the quick-start question, or become the defaults offered at each settings question if you answer `n` ([Launch](#2-launch)); the answers are not written back. A missing section or key uses the default. Comments start with `;` or `#`, including at the end of a line.
+
+**`kmshare.local.ini`** (next to `kmshare.ini`, same format, ignored by git) is read after it, so any value in it wins. It holds this PC's own settings. kmshare creates or updates it only when you agree to save a typed server address (rewriting it keeps its other keys but drops comments); you can add other keys by hand. With `--config other.ini`, the local file is `other.local.ini`.
 
 | Key | Default | Rules |
 |---|---|---|

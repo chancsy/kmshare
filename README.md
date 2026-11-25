@@ -59,6 +59,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
 | `BEHAVIOR.md` | Full behaviour reference: modes, hotkey, connections, failsafes, security, log messages. |
 | `requirements.txt` | Runtime dependencies. |
 | `kmshare.ini` | Settings: port, server address, hotkey, edge switching, beep, keep-alive. |
+| `kmshare.local.ini` | Not in the repo. This PC's own overrides, created when you save a typed server address. Ignored by git. |
 | `kmshare/__main__.py` | Asks for the role, the settings and the key, then starts the server or client. |
 | `kmshare/server.py` | Hooks, hotkey state machine, edge detection, connection handling, failsafes. |
 | `kmshare/client.py` | Connect and reconnect loop, replays received events, detects its own edge for the way back. |
@@ -95,7 +96,7 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    python -m pip install -r requirements.txt
    ```
    Every `python` command below assumes this venv is active and the current folder is `<repo>`. kmshare isn't installed as a package, so `python -m kmshare` only works from `<repo>`.
-2. **Optional: edit `kmshare.ini`.** With the quick start (Enter at `Use the settings in kmshare.ini …`), these are the settings used. If you answer `n` there, each setting is asked and the ini only sets the defaults shown in brackets. On the client it's worth setting `server_host` to the server PC's IP address or host name, which you find by running `ipconfig` on the server and reading the "IPv4 Address" line. `port` must be the same on both PCs.
+2. **Optional: edit `kmshare.ini`.** With the quick start (Enter at `Use the settings in kmshare.ini …`), these are the settings used. If you answer `n` there, each setting is asked and the ini only sets the defaults shown in brackets. The client needs the server PC's IP address or host name, which you find by running `ipconfig` on the server and reading the "IPv4 Address" line. You don't have to put it in the ini: type it at launch and kmshare offers to save it to `kmshare.local.ini` (see step 4). `port` must be the same on both PCs.
 3. **Start the server** (on the PC with the keyboard and mouse you want to use):
    ```powershell
    cd <repo>
@@ -129,7 +130,17 @@ The handshake proves that both sides hold the key without ever sending it. Both 
    New-NetFirewallRule -DisplayName "kmshare" -Direction Inbound -Protocol TCP -LocalPort 24800 -Action Allow -Profile Private
    ```
    Also make sure the wifi network is set to **Private** in Windows: Settings → Network & internet → Wi-Fi → (your network) → Network profile type.
-4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, press Enter to use the ini's settings, type the server's address (or press Enter if `server_host` is set in the ini), and type the same key. You should see:
+4. **Start the client** on the other PC: `python -m kmshare`, answer `c`, press Enter to use the ini's settings, type the server's address, and type the same key. The first time, it offers to save the address:
+   ```text
+   Role [s/c]: c
+   Use the settings in kmshare.ini and only ask for the server address and key (y/n) [y]:
+     Server address (IP or host name): 192.168.1.10
+     Save 192.168.1.10 as the server address for next time (y/n) [y]:
+     Saved to kmshare.local.ini (this PC only, not tracked by git).
+     Using: port 24800, clipboard sharing on
+   Shared key (must match on both PCs):
+   ```
+   Next time the saved address is in the brackets, so Enter keeps it. You should see:
    ```text
    connected to 192.168.1.10:24800. Waiting for the server's hotkey to take control
    ```
@@ -146,7 +157,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Step | Expected |
 |---|---|
-| `python -m pip install pytest` (once), then `python -m pytest` | `104 passed` |
+| `python -m pip install pytest` (once), then `python -m pytest` | `108 passed` |
 | Start the server, then the client with the **wrong** key | Client: `handshake failed: server rejected the key`. Server: `rejected <ip>:<port>: wrong key` |
 | Client with the right key | Server: `client connected: …`. Client: `connected to …` |
 | Press Ctrl+Shift+F12, move the mouse, type in Notepad on the client | Cursor and text appear on the client; nothing happens on the server |
@@ -170,7 +181,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 
 | Command | What it does |
 |---|---|
-| `python -m kmshare` | **Interactive:** asks for the role, then whether to use the ini's settings as they are (Enter = yes; a client is then asked only for the server address). `n` asks each setting (Enter keeps the ini default). Then the key, then runs. Answers aren't saved. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
+| `python -m kmshare` | **Interactive:** asks for the role, then whether to use the ini's settings as they are (Enter = yes; a client is then asked only for the server address). `n` asks each setting (Enter keeps the ini default). Then the key (asked again if left empty), then runs. Answers aren't saved, except a new server address if you agree to save it to `kmshare.local.ini`. Ctrl+C quits (switch back to LOCAL first, otherwise Ctrl+C goes to the client). |
 | `python -m kmshare --role server` | **Any argument skips the settings questions** and uses the ini as it is; only the key is asked. |
 | `python -m kmshare --role client --host 192.168.1.10` | Client using this server address, overriding the ini. |
 | `python -m kmshare --config D:\other.ini` | Uses a different ini file. |
@@ -226,7 +237,7 @@ All steps below have been tested on two PCs (server with two monitors of differe
 - **What's exposed:** the server listens on TCP `port` on all adapters (`bind = 0.0.0.0`). Anyone who can connect still has to pass the key check, and the server handles one handshake at a time with a 1 s pause after each failure, which slows down guessing. Set `bind` to the server's LAN IP to listen on one adapter only.
 - **Clipboard text** goes over the same encrypted link as your typing, and only its size is logged. That includes passwords copied from browser-extension password managers (see [Clipboard](#clipboard)). Turn `[features] clipboard` off on either PC if you don't want it shared at all.
 - **The key** is never written to disk. It's turned into an encryption key with scrypt, a deliberately slow function. A weak key could still be guessed offline by someone who records a handshake *by posing as your server*, so use a passphrase rather than a short password.
-- **Git ignores** `.dev/` (temporary files, pytest cache) and `__pycache__/`. `kmshare.ini` contains no secrets and is tracked.
+- **Git ignores** `.dev/` (temporary files, pytest cache), `__pycache__/` and `*.local.ini`. `kmshare.ini` contains no secrets and is tracked; keep your own server address in `kmshare.local.ini` rather than in `kmshare.ini`, so your LAN IP can't end up in a commit.
 - **Admin windows (for example the HoYoPlay launcher, Task Manager, installers):** Windows hides input aimed at an admin window from a program that isn't running as administrator.
   - **Server:** while an admin window has focus, kmshare doesn't see the mouse or keyboard. Edge switching and Ctrl+Shift+F12 don't work, and the cursor stays **trapped** on the server. Click any normal window (or the desktop or taskbar) and it works again. If an admin window is focused while you're controlling the client, your input can go to that window instead.
   - **Client:** the cursor still moves over admin windows, but clicks and keys don't reach them.

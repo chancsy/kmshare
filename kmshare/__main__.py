@@ -21,7 +21,7 @@ from typing import Callable, TypeVar
 
 from . import __version__, adminwatch, winput
 from .channel import derive_master_key
-from .config import DEFAULT_INI, Config, load_config
+from .config import DEFAULT_INI, Config, load_config, local_ini, save_local
 from .edge import EdgeSettings
 from .hotkey import parse_hotkey
 
@@ -118,7 +118,7 @@ def _ask_edge(cfg: Config) -> Config:
     return dataclasses.replace(cfg, edge_switch=True, edge=edge)
 
 
-def _interactive_settings(role: str, cfg: Config) -> Config:
+def _interactive_settings(role: str, cfg: Config, ini: Path) -> Config:
     print("Settings (press Enter to keep the value in [brackets], from the ini):")
     if role == "server":
         port = _ask("  Port", str(cfg.port), _port)
@@ -131,18 +131,29 @@ def _interactive_settings(role: str, cfg: Config) -> Config:
         cfg = dataclasses.replace(cfg, port=port, bind=bind, hotkey=hotkey, beep=beep,
                                   ping_interval=ping, peer_timeout=timeout)
         return _ask_clipboard(_ask_edge(cfg))
-    host = _ask("  Server address (IP or host name)", cfg.server_host, _not_empty)
+    cfg = _ask_host(cfg, ini)
     port = _ask("  Port", str(cfg.port), _port)
     timeout = _ask("  Drop the link after silence of, seconds", f"{cfg.peer_timeout:g}",
                    _seconds(cfg.ping_interval))
-    return _ask_clipboard(dataclasses.replace(cfg, server_host=host, port=port, peer_timeout=timeout))
+    return _ask_clipboard(dataclasses.replace(cfg, port=port, peer_timeout=timeout))
 
 
-def _quick_settings(role: str, cfg: Config) -> Config:
+def _ask_host(cfg: Config, ini: Path) -> Config:
+    """Client: the server address; a new one can be saved to this PC's local ini."""
+    host = _ask("  Server address (IP or host name)", cfg.server_host, _not_empty)
+    if host != cfg.server_host and _ask(f"  Save {host} as the server address for next time (y/n)", "y", _yes_no):
+        try:
+            saved = save_local(ini, "network", "server_host", host)
+            print(f"  Saved to {saved.name} (this PC only, not tracked by git).")
+        except OSError as e:
+            print(f"  Couldn't save it: {e}")
+    return dataclasses.replace(cfg, server_host=host)
+
+
+def _quick_settings(role: str, cfg: Config, ini: Path) -> Config:
     """The ini's settings as they are; a client is still asked for the server address."""
     if role == "client":
-        cfg = dataclasses.replace(cfg, server_host=_ask("  Server address (IP or host name)",
-                                                        cfg.server_host, _not_empty))
+        cfg = _ask_host(cfg, ini)
     on_off = lambda v: "on" if v else "off"  # noqa: E731
     parts = [f"port {cfg.port}"]
     if role == "server":
@@ -180,14 +191,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Config error: {e}", file=sys.stderr)
         return 2
 
-    print(f"kmshare {__version__}: keyboard/mouse sharing  (config: {args.config})")
+    local = local_ini(args.config)
+    shown = f"{args.config} + {local.name}" if local.is_file() else f"{args.config}"
+    print(f"kmshare {__version__}: keyboard/mouse sharing  (config: {shown})")
     role = args.role or _ask_role()
     if interactive:
         asked = "the server address and key" if role == "client" else "the key"
         if _ask(f"Use the settings in {args.config.name} and only ask for {asked} (y/n)", "y", _yes_no):
-            cfg = _quick_settings(role, cfg)
+            cfg = _quick_settings(role, cfg, args.config)
         else:
-            cfg = _interactive_settings(role, cfg)
+            cfg = _interactive_settings(role, cfg, args.config)
     elif role == "client":
         host = args.host or cfg.server_host
         while not host:
@@ -195,9 +208,9 @@ def main(argv: list[str] | None = None) -> int:
         cfg = dataclasses.replace(cfg, server_host=host)
 
     passphrase = getpass.getpass("Shared key (must match on both PCs): ")
-    if not passphrase:
-        print("A key is required.", file=sys.stderr)
-        return 2
+    while not passphrase:  # an Enter pressed by accident asks again; Ctrl+C quits
+        print("  A key is required.")
+        passphrase = getpass.getpass("Shared key (must match on both PCs): ")
     if len(passphrase) < 8:
         print("Warning: keys shorter than 8 characters are easy to guess.")
     master = derive_master_key(passphrase)
